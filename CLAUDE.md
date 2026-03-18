@@ -4,7 +4,7 @@
 **Owner:** William Summers — Salesforce Admin & Systems Architect, Progressive Dental Marketing
 **Project Path:** `/Users/williamsummers/salesforce-retention-mcp`
 **Last Updated:** March 2026
-**Status:** Active build — 7 tools live, 1 deployment pending, 6+ planned
+**Status:** Active build — 8 tools live, Tool 9 (sf_research_prospect) in build
 
 ---
 
@@ -138,6 +138,13 @@ Always use confirmed field API names from the field maps or the CSV export. Neve
 **William Summers User ID:** `005PU000001eUQDYA2`
 
 **Key Custom Objects:**
+- `Gamma__c` — Gamma presentation decks linked to Account or Lead
+  - `Name` — Text(80), deck name
+  - `Gamma_Link__c` — URL(255), the Gamma deck URL
+  - `Account__c` — Lookup(Account)
+  - `Lead__c` — Lookup(Lead)
+  - Relationship type: Lookup (not master-detail) on both Account and Lead
+  - Written by: sf_research_prospect (on research completion) and n8n Workflow 1
 - `Refund_Request__c` — open refund requests (critical churn signal, priority override)
 - `Change_Order__c` — change orders with cancellation/pause dates
 - `Business_Objectives__c` — client goals linked to Account
@@ -161,6 +168,12 @@ Always use confirmed field API names from the field maps or the CSV export. Neve
 - `Delinquent__c` — Billing delinquency flag
 - `Upsell_Opportunity__c` — Upsell signal picklist
 - `Engagement_Status__c` — AM engagement assessment
+- `Health_Score__c` — Number(3,0), stored composite health score 0–100 (written by nightly scanner)
+- `Health_Tier__c` — Picklist: Healthy / Watch / At Risk / Critical (written by nightly scanner)
+- `Health_Score_Date__c` — Date, last time score was calculated
+- `Sentiment_Trend__c` — Picklist: Improving / Stable / Declining / Unknown
+- `Call_Frequency_30d__c` — Number(3,0), calls in last 30 days (updated by nightly flow)
+- `Doctor_Contact_90d__c` — Number(3,0), times doctor was reached in last 90 days
 - `Account_Manager_Lookup__c` — Lookup(User) to assigned AM
 - `Account_Manager_Email__c` — Formula text, AM email
 - `TCI_Status__c` / `TCI_Enrolled__c` — TCI program status
@@ -355,7 +368,7 @@ n8n is the designated automation and orchestration layer. Zero production workfl
 2. Select Gamma template based on Primary_Gap_Type__c (SEO / Reputation / Video / Authority)
 3. POST to Gamma API with formatted content
 4. Receive deck URL from Gamma
-5. Write deck URL back to Lead record in Salesforce (Gamma_Deck_URL__c)
+5. Write deck URL back to Salesforce by creating a Gamma__c record (Gamma_Link__c = URL, Account__c or Lead__c = parent record)
 6. Create Task for rep: "Your prospect deck is ready — [URL]"
 7. Optional: Post to rep's Slack channel
 **Templates needed in Gamma:** SEO Gap deck, Reputation Gap deck, Video Gap deck, Full-Arch Authority deck, Market Opportunity deck
@@ -456,7 +469,6 @@ These fields are required before certain tools and workflows can function fully:
 | Research_Summary__c | Lead + Account | Long Text Area | Research snapshot from sf_research_prospect |
 | Primary_Gap_Type__c | Lead + Account | Picklist | Drives Gamma template selection |
 | Competitor_Snapshot__c | Related object | Custom Object | Stores weekly competitor data per Lead/Account |
-| Gamma_Deck_URL__c | Lead + Account | URL | Gamma deck link written by n8n |
 | Renewal_Deck_URL__c | Account | URL | Renewal deck link written by n8n |
 
 **Flow automations to build:**

@@ -336,6 +336,28 @@ class SalesforceService {
   async rawQuery<T>(soql: string): Promise<T[]> {
     return this.query<T>(soql);
   }
+
+  /** Update a single Salesforce record by ID */
+  async updateRecord(objectType: string, id: string, fields: Record<string, unknown>): Promise<void> {
+    assertSfId(id, `${objectType} ID`);
+    const conn = await this.getConnection();
+    const result = await conn.sobject(objectType).update({ Id: id, ...fields });
+    const single = Array.isArray(result) ? result[0] : result;
+    if (!single.success) {
+      throw new Error(`Failed to update ${objectType} ${id}: ${JSON.stringify(single.errors)}`);
+    }
+  }
+
+  /** Create a single Salesforce record, return the new record ID */
+  async createRecord(objectType: string, fields: Record<string, unknown>): Promise<string> {
+    const conn = await this.getConnection();
+    const result = await conn.sobject(objectType).create(fields);
+    const single = Array.isArray(result) ? result[0] : result;
+    if (!single.success) {
+      throw new Error(`Failed to create ${objectType}: ${JSON.stringify(single.errors)}`);
+    }
+    return single.id;
+  }
 }
 
 export const salesforceService = new SalesforceService();
