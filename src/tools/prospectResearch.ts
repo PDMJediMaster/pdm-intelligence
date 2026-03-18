@@ -485,7 +485,25 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
       Research_Summary__c:         scores.research_summary,
     };
 
-    // Write to Lead if found
+    // Auto-create Lead if no existing record found
+    if (!resolvedLeadId && !resolvedAccountId) {
+      try {
+        const newLeadFields: Record<string, unknown> = {
+          LastName:  practiceName ?? websiteUrl ?? 'Unknown Practice',
+          Company:   practiceName ?? websiteUrl ?? 'Unknown Practice',
+          LeadSource: 'PDM Research Tool',
+        };
+        if (city)       newLeadFields['City']    = city;
+        if (state)      newLeadFields['State']   = state;
+        if (websiteUrl) newLeadFields['Website'] = websiteUrl;
+
+        resolvedLeadId = await salesforceService.createRecord('Lead', newLeadFields);
+      } catch (err) {
+        writeErrors.push(`Lead create failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Write to Lead
     if (resolvedLeadId) {
       try {
         await salesforceService.updateRecord('Lead', resolvedLeadId, scoreFields);
@@ -524,13 +542,11 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
 
     const sfStatus: string[] = [];
     if (resolvedLeadId && !writeErrors.some(e => e.startsWith('Lead'))) {
-      sfStatus.push(`✅ Lead ${resolvedLeadId} updated`);
+      const wasNew = !sfLead;
+      sfStatus.push(`✅ Lead ${resolvedLeadId} ${wasNew ? 'created and scores written' : 'updated'}`);
     }
     if (resolvedAccountId && !writeErrors.some(e => e.startsWith('Account'))) {
       sfStatus.push(`✅ Account ${resolvedAccountId} updated`);
-    }
-    if (!resolvedLeadId && !resolvedAccountId) {
-      sfStatus.push('⚠️ No Salesforce record found — scores not written. Create a Lead in Salesforce to persist this research.');
     }
     if (writeErrors.length > 0) {
       writeErrors.forEach(e => sfStatus.push(`❌ ${e}`));
