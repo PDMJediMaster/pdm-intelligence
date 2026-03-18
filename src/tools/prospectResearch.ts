@@ -488,9 +488,12 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
     // Auto-create Lead if no existing record found
     if (!resolvedLeadId && !resolvedAccountId) {
       try {
+        const nameForEmail = (practiceName ?? websiteUrl ?? 'prospect')
+          .toLowerCase().replace(/[^a-z0-9]/g, '.');
         const newLeadFields: Record<string, unknown> = {
           LastName:   practiceName ?? websiteUrl ?? 'Unknown Practice',
           Company:    practiceName ?? websiteUrl ?? 'Unknown Practice',
+          Email:      `research.${nameForEmail}@progressivedental.com`,
           LeadSource: 'PDM Research Tool',
           Status:     'Open - Not Contacted',
         };
