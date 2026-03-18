@@ -489,9 +489,10 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
     if (!resolvedLeadId && !resolvedAccountId) {
       try {
         const newLeadFields: Record<string, unknown> = {
-          LastName:  practiceName ?? websiteUrl ?? 'Unknown Practice',
-          Company:   practiceName ?? websiteUrl ?? 'Unknown Practice',
+          LastName:   practiceName ?? websiteUrl ?? 'Unknown Practice',
+          Company:    practiceName ?? websiteUrl ?? 'Unknown Practice',
           LeadSource: 'PDM Research Tool',
+          Status:     'Open - Not Contacted',
         };
         if (city)       newLeadFields['City']    = city;
         if (state)      newLeadFields['State']   = state;
