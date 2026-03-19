@@ -155,6 +155,46 @@ export const prospectResearchTools: Tool[] = [
           type: 'string',
           description: 'One-paragraph summary of key findings, max 500 characters',
         },
+        primaryCompetitorName: {
+          type: 'string',
+          description: 'Name of the #1 competitor identified in the research',
+        },
+        primaryCompetitorWebsite: {
+          type: 'string',
+          description: 'Website URL of the primary competitor',
+        },
+        competitorReviewCount: {
+          type: 'number',
+          description: 'Current Google review count for the primary competitor',
+        },
+        competitorStarRating: {
+          type: 'number',
+          description: 'Current Google star rating for the primary competitor (e.g. 4.7)',
+        },
+        competitorRunningAds: {
+          type: 'boolean',
+          description: 'Is the primary competitor running Google Ads?',
+        },
+        competitorRunningFacebookAds: {
+          type: 'boolean',
+          description: 'Is the primary competitor running Facebook/Meta ads?',
+        },
+        competitorMapsPosition: {
+          type: 'number',
+          description: 'Primary competitor Google Maps pack position (1-3 = in pack, 0 = not in pack)',
+        },
+        competitorPressureScore: {
+          type: 'number',
+          description: 'Competitive pressure score 0-100 for the primary competitor',
+        },
+        competitorPrimaryServices: {
+          type: 'string',
+          description: 'Key services/procedures the competitor markets (e.g. "All-on-4, Full-Arch, Implants")',
+        },
+        competitorNotes: {
+          type: 'string',
+          description: 'Qualitative notes on the competitor — what makes them a threat',
+        },
       },
       required: ['marketingMaturityScore', 'likelihoodToBuyScore', 'priorityLevel', 'primaryGapType', 'researchSummary'],
     },
@@ -173,17 +213,28 @@ const ProspectResearchArgs = z.object({
 });
 
 const SaveResearchScoresArgs = z.object({
-  practiceName:           z.string().optional(),
-  city:                   z.string().optional(),
-  state:                  z.string().optional(),
-  websiteUrl:             z.string().optional(),
-  leadId:                 z.string().optional(),
-  accountId:              z.string().optional(),
-  marketingMaturityScore: z.number().min(0).max(100),
-  likelihoodToBuyScore:   z.number().min(0).max(100),
-  priorityLevel:          z.enum(VALID_PRIORITY_LEVELS),
-  primaryGapType:         z.enum(VALID_GAP_TYPES),
-  researchSummary:        z.string().max(500),
+  practiceName:               z.string().optional(),
+  city:                       z.string().optional(),
+  state:                      z.string().optional(),
+  websiteUrl:                 z.string().optional(),
+  leadId:                     z.string().optional(),
+  accountId:                  z.string().optional(),
+  marketingMaturityScore:     z.number().min(0).max(100),
+  likelihoodToBuyScore:       z.number().min(0).max(100),
+  priorityLevel:              z.enum(VALID_PRIORITY_LEVELS),
+  primaryGapType:             z.enum(VALID_GAP_TYPES),
+  researchSummary:            z.string().max(500),
+  // Competitor snapshot fields (optional)
+  primaryCompetitorName:      z.string().optional(),
+  primaryCompetitorWebsite:   z.string().optional(),
+  competitorReviewCount:      z.number().optional(),
+  competitorStarRating:       z.number().optional(),
+  competitorRunningAds:       z.boolean().optional(),
+  competitorRunningFacebookAds: z.boolean().optional(),
+  competitorMapsPosition:     z.number().optional(),
+  competitorPressureScore:    z.number().min(0).max(100).optional(),
+  competitorPrimaryServices:  z.string().optional(),
+  competitorNotes:            z.string().optional(),
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -375,6 +426,16 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
     priorityLevel,
     primaryGapType,
     researchSummary,
+    primaryCompetitorName,
+    primaryCompetitorWebsite,
+    competitorReviewCount,
+    competitorStarRating,
+    competitorRunningAds,
+    competitorRunningFacebookAds,
+    competitorMapsPosition,
+    competitorPressureScore,
+    competitorPrimaryServices,
+    competitorNotes,
   } = SaveResearchScoresArgs.parse(rawArgs ?? {});
 
   const lines: string[] = [];
@@ -440,6 +501,35 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
     }
   }
 
+  // ── Competitor Snapshot Write ─────────────────────────────────────────────
+
+  let snapshotId: string | null = null;
+  if (primaryCompetitorName && (resolvedLeadId || resolvedAccountId)) {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const snapshotFields: Record<string, unknown> = {
+        Competitor_Name__c:         primaryCompetitorName,
+        Snapshot_Date__c:           today,
+        Is_Primary_Competitor__c:   true,
+      };
+      if (resolvedLeadId)             snapshotFields['Lead__c']                    = resolvedLeadId;
+      if (resolvedAccountId)          snapshotFields['Account__c']                 = resolvedAccountId;
+      if (primaryCompetitorWebsite)   snapshotFields['Competitor_Website__c']      = primaryCompetitorWebsite;
+      if (competitorReviewCount != null) snapshotFields['Google_Review_Count__c']  = competitorReviewCount;
+      if (competitorStarRating != null)  snapshotFields['Google_Star_Rating__c']   = competitorStarRating;
+      if (competitorRunningAds != null)  snapshotFields['Running_Google_Ads__c']   = competitorRunningAds;
+      if (competitorRunningFacebookAds != null) snapshotFields['Running_Facebook_Ads__c'] = competitorRunningFacebookAds;
+      if (competitorMapsPosition != null) snapshotFields['Maps_Pack_Position__c']  = competitorMapsPosition;
+      if (competitorPressureScore != null) snapshotFields['Competitive_Pressure_Score__c'] = Math.round(competitorPressureScore);
+      if (competitorPrimaryServices)  snapshotFields['Primary_Services__c']        = competitorPrimaryServices;
+      if (competitorNotes)            snapshotFields['Research_Notes__c']           = competitorNotes.slice(0, 2000);
+
+      snapshotId = await salesforceService.createRecord('Competitor_Snapshot__c', snapshotFields);
+    } catch (err) {
+      writeErrors.push(`Competitor snapshot failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // Build result summary
   lines.push(`## 📊 Research Scores Saved`);
   lines.push('');
@@ -457,6 +547,11 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
   }
   if (resolvedAccountId && !writeErrors.some(e => e.startsWith('Account'))) {
     lines.push(`- ✅ Account \`${resolvedAccountId}\` updated`);
+  }
+  if (snapshotId) {
+    lines.push(`- ✅ Competitor snapshot created: **${primaryCompetitorName}** \`${snapshotId}\``);
+  } else if (primaryCompetitorName && !writeErrors.some(e => e.startsWith('Competitor'))) {
+    lines.push(`- ℹ️ No competitor snapshot created (no Salesforce record to link to)`);
   }
   writeErrors.forEach(e => lines.push(`- ❌ ${e}`));
 
