@@ -13,6 +13,7 @@ import { healthReportTools, healthReportHandlers } from './tools/healthReports.j
 import { pipelineTools, pipelineHandlers } from './tools/pipeline.js';
 import { callIntelligenceTools, callIntelligenceHandlers } from './tools/callIntelligence.js';
 import { prospectResearchTools, prospectResearchHandlers } from './tools/prospectResearch.js';
+import { repSynopsisTools, repSynopsisHandlers } from './tools/repSynopsis.js';
 
 config();
 
@@ -24,6 +25,7 @@ const ALL_TOOLS = [
   ...pipelineTools,
   ...callIntelligenceTools,
   ...prospectResearchTools,
+  ...repSynopsisTools,
 ];
 
 const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
@@ -32,6 +34,7 @@ const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
   ...pipelineHandlers,
   ...callIntelligenceHandlers,
   ...prospectResearchHandlers,
+  ...repSynopsisHandlers,
 };
 
 // ─── MCP Server Factory ───────────────────────────────────────────────────
