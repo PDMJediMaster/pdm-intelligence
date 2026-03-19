@@ -76,6 +76,8 @@ interface SFOpportunity {
   Amount?: number;
   LastModifiedDate?: string;
   CreatedDate?: string;
+  Stage_Entry_Date__c?: string;
+  Days_In_Current_Stage__c?: number;
   AccountId?: string;
   Account?: { Name: string };
   OwnerId?: string;
@@ -229,6 +231,7 @@ async function handleRepPipelineSynopsis(rawArgs: unknown): Promise<string> {
     salesforceService.rawQuery<SFOpportunity>(
       `SELECT Id, Name, StageName, CloseDate, Amount,
               LastModifiedDate, CreatedDate,
+              Stage_Entry_Date__c, Days_In_Current_Stage__c,
               AccountId, Account.Name, OwnerId, Owner.Name
        FROM Opportunity
        WHERE IsClosed = false
@@ -270,8 +273,14 @@ async function handleRepPipelineSynopsis(rawArgs: unknown): Promise<string> {
 
   // ── Segment opportunities ─────────────────────────────────────────────────
 
-  const staleOpps = openOpps.filter(o => daysSince(o.LastModifiedDate) >= opp_stale_days);
-  const activeOpps = openOpps.filter(o => daysSince(o.LastModifiedDate) < opp_stale_days);
+  // Use Days_In_Current_Stage__c (exact) if populated; fall back to LastModifiedDate proxy
+  const daysInStage = (o: SFOpportunity): number =>
+    (o.Days_In_Current_Stage__c != null && o.Days_In_Current_Stage__c > 0)
+      ? o.Days_In_Current_Stage__c
+      : daysSince(o.LastModifiedDate);
+
+  const staleOpps  = openOpps.filter(o => daysInStage(o) >= opp_stale_days);
+  const activeOpps = openOpps.filter(o => daysInStage(o) < opp_stale_days);
 
   // ── Build output ──────────────────────────────────────────────────────────
 
@@ -410,12 +419,15 @@ async function handleRepPipelineSynopsis(rawArgs: unknown): Promise<string> {
         const acctName  = (opp.Account as { Name?: string } | undefined)?.Name ?? opp.AccountId ?? 'Unknown';
         const owner     = (opp.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown';
         const amt       = opp.Amount ? `$${opp.Amount.toLocaleString()}` : 'No amount';
-        const staledays = daysSince(opp.LastModifiedDate);
+        const staledays = daysInStage(opp);
+        const stageNote = opp.Stage_Entry_Date__c
+          ? `Entered stage: ${formatDate(opp.Stage_Entry_Date__c)}`
+          : `Last modified: ${formatDate(opp.LastModifiedDate)} (est.)`;
         const action    = staleOppAction(opp.StageName, staledays);
 
         lines.push(`#### ${acctName}`);
         lines.push(`**Stage:** ${opp.StageName ?? 'Unknown'} | **Amount:** ${amt} | **Owner:** ${owner}`);
-        lines.push(`**Last modified:** ${formatDate(opp.LastModifiedDate)} (${staledays} days ago)`);
+        lines.push(`**${stageNote}** | **${staledays} days in current stage**`);
         lines.push(`**Action:** ${action}`);
         lines.push('');
       }
