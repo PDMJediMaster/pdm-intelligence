@@ -15,6 +15,7 @@ import { callIntelligenceTools, callIntelligenceHandlers } from './tools/callInt
 import { prospectResearchTools, prospectResearchHandlers } from './tools/prospectResearch.js';
 import { repSynopsisTools, repSynopsisHandlers } from './tools/repSynopsis.js';
 import { competitiveAlertTools, competitiveAlertHandlers } from './tools/competitiveAlerts.js';
+import { leadIntelligenceTools, leadIntelligenceHandlers } from './tools/leadIntelligence.js';
 
 config();
 
@@ -28,6 +29,7 @@ const ALL_TOOLS = [
   ...prospectResearchTools,
   ...repSynopsisTools,
   ...competitiveAlertTools,
+  ...leadIntelligenceTools,
 ];
 
 const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
@@ -38,6 +40,7 @@ const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
   ...prospectResearchHandlers,
   ...repSynopsisHandlers,
   ...competitiveAlertHandlers,
+  ...leadIntelligenceHandlers,
 };
 
 // ─── MCP Server Factory ───────────────────────────────────────────────────
