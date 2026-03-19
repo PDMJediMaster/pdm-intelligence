@@ -517,9 +517,9 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
         LeadSource: 'PDM Research Tool',
         Status:     'Open - Not Contacted',
       };
-      if (city)       newLeadFields['City']    = city;
-      if (state)      newLeadFields['State']   = state;
-      if (websiteUrl) newLeadFields['Website'] = websiteUrl;
+      if (city)       newLeadFields['City']      = city;
+      if (state)      newLeadFields['StateCode'] = state;  // StateCode required when State/Country Picklists enabled
+      if (websiteUrl) newLeadFields['Website']   = websiteUrl;
 
       resolvedLeadId = await salesforceService.createRecord('Lead', newLeadFields);
       wasLeadCreated = true;
