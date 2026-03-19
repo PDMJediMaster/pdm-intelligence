@@ -1,7 +1,7 @@
 {
   "name": "salesforce-retention-mcp",
   "version": "1.0.0",
-  "description": "PDM Account Manager Intelligence Hub — MCP server connecting Claude Desktop to Salesforce for dental implant practice account management",
+  "description": "Foresight by PDM — AI intelligence platform connecting Claude to Salesforce. See what's coming before it arrives.",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

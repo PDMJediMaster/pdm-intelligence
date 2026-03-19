@@ -1,10 +1,12 @@
-# CLAUDE.md — PDM Account Manager Intelligence Hub
+# CLAUDE.md — Foresight by PDM
 ## Master Brain File — Read This Completely Before Taking Any Action
+
+> *"See what's coming before it arrives."*
 
 **Owner:** William Summers — Salesforce Admin & Systems Architect, Progressive Dental Marketing
 **Project Path:** `/Users/williamsummers/salesforce-retention-mcp`
 **Last Updated:** March 2026
-**Status:** Active build — 8 tools live, Tool 9 (sf_research_prospect) in build
+**Status:** Active build — 13 tools live
 
 ---
 
@@ -34,7 +36,7 @@ Walt Disney told his people when they showed him something: **"Plus It."** Meani
 
 ## Platform Overview — What This System Is
 
-The PDM Account Manager Intelligence Hub connects Claude Desktop directly to Salesforce via a TypeScript MCP (Model Context Protocol) server using jsforce. It gives Account Managers and Sales Reps AI-powered intelligence about their clients and prospects without leaving their workflow.
+**Foresight** is PDM's AI intelligence platform. It connects Claude Desktop directly to Salesforce via a TypeScript MCP (Model Context Protocol) server using jsforce. It gives Account Managers and Sales Reps AI-powered intelligence about their clients and prospects without leaving their workflow — seeing churn, renewals, competitive threats, and opportunities before they become obvious.
 
 **The business problem it solves:** PDM Account Managers manage 50+ client relationships simultaneously. Without AI assistance, they walk into renewal calls unprepared, miss churn signals until it's too late, can't quickly research new prospects, and spend hours on admin work that should take minutes.
 

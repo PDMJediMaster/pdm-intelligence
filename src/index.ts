@@ -46,7 +46,7 @@ const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
 
 function createMcpServer(): Server {
   const server = new Server(
-    { name: 'pdm-account-intelligence', version: '1.0.0' },
+    { name: 'foresight', version: '1.0.0' },
     { capabilities: { tools: {} } }
   );
 
@@ -98,7 +98,7 @@ async function startHttp(): Promise<void> {
     // Health check — Railway uses this to confirm the service is up
     if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', server: 'pdm-account-intelligence', tools: ALL_TOOLS.length }));
+      res.end(JSON.stringify({ status: 'ok', server: 'foresight', tools: ALL_TOOLS.length }));
       return;
     }
 
