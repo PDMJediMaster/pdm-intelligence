@@ -41,6 +41,8 @@ interface SFLead {
   Status?: string;
   OwnerId?: string;
   Owner?: { Name: string };
+  Sales_Rep__c?: string;
+  Sales_Rep__r?: { Name: string };
   LeadSource?: string;
   LastActivityDate?: string;
   CreatedDate?: string;
@@ -50,6 +52,20 @@ interface SFLead {
   Priority_Level__c?: string;
   Primary_Gap_Type__c?: string;
   Research_Summary__c?: string;
+}
+
+interface SFEvent {
+  Id: string;
+  Subject?: string;
+  StartDateTime?: string;
+  EndDateTime?: string;
+  WhoId?: string;
+  Who?: { Name: string };
+  WhatId?: string;
+  What?: { Name: string };
+  OwnerId?: string;
+  Owner?: { Name: string };
+  Description?: string;
 }
 
 interface SFOpportunity {
@@ -184,22 +200,29 @@ async function handleRepPipelineSynopsis(rawArgs: unknown): Promise<string> {
     resolvedRepName = users[0].Name;
   }
 
-  const ownerFilter = owner_id ? `AND OwnerId = '${owner_id}'` : `AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'`;
+  // Owner filters — Leads use Sales_Rep__c OR OwnerId; Opps/Events use OwnerId
+  const oppOwnerFilter   = owner_id ? `AND OwnerId = '${owner_id}'` : `AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'`;
+  const leadOwnerFilter  = owner_id
+    ? `AND (OwnerId = '${owner_id}' OR Sales_Rep__c = '${owner_id}')`
+    : `AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'`;
+  const eventOwnerFilter = owner_id ? `AND OwnerId = '${owner_id}'` : `AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'`;
+
   const deadStatusList = DEAD_LEAD_STATUSES.map(s => `'${s}'`).join(', ');
 
   // ── Parallel queries ──────────────────────────────────────────────────────
 
-  const [allLeads, openOpps] = await Promise.all([
+  const [allLeads, openOpps, thisWeekEvents] = await Promise.all([
     salesforceService.rawQuery<SFLead>(
       `SELECT Id, Name, Company, City, State, Phone, Email,
-              Status, OwnerId, Owner.Name, LeadSource,
-              LastActivityDate, CreatedDate, Website,
+              Status, OwnerId, Owner.Name,
+              Sales_Rep__c, Sales_Rep__r.Name,
+              LeadSource, LastActivityDate, CreatedDate, Website,
               Likelihood_to_Buy_Score__c, Marketing_Maturity_Score__c,
               Priority_Level__c, Primary_Gap_Type__c, Research_Summary__c
        FROM Lead
        WHERE IsConverted = false
          AND Status NOT IN (${deadStatusList})
-         ${ownerFilter}
+         ${leadOwnerFilter}
        ORDER BY Likelihood_to_Buy_Score__c DESC NULLS LAST, LastActivityDate DESC NULLS LAST
        LIMIT 100`
     ),
@@ -209,9 +232,20 @@ async function handleRepPipelineSynopsis(rawArgs: unknown): Promise<string> {
               AccountId, Account.Name, OwnerId, Owner.Name
        FROM Opportunity
        WHERE IsClosed = false
-         ${ownerFilter}
+         ${oppOwnerFilter}
        ORDER BY CloseDate ASC NULLS LAST
        LIMIT 100`
+    ),
+    salesforceService.rawQuery<SFEvent>(
+      `SELECT Id, Subject, StartDateTime, EndDateTime,
+              WhoId, Who.Name, WhatId, What.Name,
+              OwnerId, Owner.Name
+       FROM Event
+       WHERE StartDateTime >= TODAY
+         AND StartDateTime <= NEXT_N_DAYS:7
+         ${eventOwnerFilter}
+       ORDER BY StartDateTime ASC
+       LIMIT 50`
     ),
   ]);
 
@@ -255,6 +289,31 @@ async function handleRepPipelineSynopsis(rawArgs: unknown): Promise<string> {
   lines.push(`| Unscored Leads | **${unscoredLeads.length}** |`);
   lines.push(`| Open Opportunities | **${openOpps.length}** |`);
   lines.push(`| Stale Opportunities (>${opp_stale_days}d) | **${staleOpps.length}** |`);
+  lines.push(`| Calls/Events This Week | **${thisWeekEvents.length}** |`);
+  lines.push('');
+
+  // ── Section 0: This Week's Calendar ──────────────────────────────────────
+
+  lines.push(`---`);
+  lines.push(`## 📅 Scheduled This Week`);
+  lines.push('');
+
+  if (thisWeekEvents.length === 0) {
+    lines.push(`⚠️ **No events scheduled in Salesforce for the next 7 days.**`);
+    lines.push(`Schedule calls for your top prospects to ensure consistent outreach.`);
+  } else {
+    for (const evt of thisWeekEvents) {
+      const start    = evt.StartDateTime
+        ? new Date(evt.StartDateTime).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        : 'No time set';
+      const contact  = (evt.Who as { Name?: string } | undefined)?.Name;
+      const related  = (evt.What as { Name?: string } | undefined)?.Name;
+      const owner    = (evt.Owner as { Name?: string } | undefined)?.Name;
+      const details  = [contact, related].filter(Boolean).join(' — ');
+
+      lines.push(`- **${evt.Subject ?? 'Untitled Event'}** | ${start}${details ? ` | ${details}` : ''}${owner ? ` | ${owner}` : ''}`);
+    }
+  }
   lines.push('');
 
   // ── Section 1: Top Priority Prospects ────────────────────────────────────
