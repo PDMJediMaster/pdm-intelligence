@@ -1,0 +1,202 @@
+{
+  "name": "PDM Workflow 3 — Nightly Churn Scanner",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 23 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule — 11pm Nightly",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300],
+      "notes": "Fires every night at 11pm. Adjust cron expression if a different time is preferred."
+    },
+    {
+      "parameters": {
+        "url": "https://salesforce-retention-mcp-production.up.railway.app/mcp",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": { \"name\": \"sf_run_nightly_health_scan\", \"arguments\": { \"dry_run\": false, \"limit\": 300 } } }",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "run-health-scan",
+      "name": "Foresight — Run Health Scan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "notes": "Calls sf_run_nightly_health_scan on Railway. 2-minute timeout for large account sets."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the health scan response and extract the machine-readable summary\nconst body = $input.first().json;\n\n// MCP returns: { result: { content: [{ type: 'text', text: '...' }] } }\nconst text = body?.result?.content?.[0]?.text ?? body?.content?.[0]?.text ?? JSON.stringify(body);\n\n// Extract SCAN_RESULT JSON embedded in the response\nconst match = text.match(/SCAN_RESULT:({.*})/);\nif (!match) {\n  return [{\n    json: {\n      success: false,\n      error: 'Could not parse SCAN_RESULT from health scan response',\n      rawText: text.slice(0, 500),\n      critical: 0,\n      tierDrops: 0,\n      scanned: 0,\n    }\n  }];\n}\n\nlet summary;\ntry {\n  summary = JSON.parse(match[1]);\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: `JSON parse failed: ${e.message}`,\n      rawMatch: match[1].slice(0, 300),\n      critical: 0,\n      tierDrops: 0,\n      scanned: 0,\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    date: summary.date,\n    scanned: summary.scanned,\n    healthy: summary.healthy,\n    watch: summary.watch,\n    atRisk: summary.atRisk,\n    critical: summary.critical,\n    tierDrops: summary.tierDrops,\n    tasksCreated: summary.tasksCreated,\n    dryRun: summary.dryRun,\n    criticalAccounts: summary.criticalAccounts ?? [],\n    tierDropAccounts: summary.tierDropAccounts ?? [],\n    // Formatted Slack message for critical alert\n    slackCriticalMessage: summary.critical > 0\n      ? [\n          `🚨 *Foresight Nightly Scan — ${summary.date}*`,\n          ``,\n          `*${summary.critical} account(s) in CRITICAL tier* require immediate AM attention:`,\n          ...(summary.criticalAccounts ?? []).map(a =>\n            `• *${a.name}* — Score: ${a.score}${a.mrr ? ` | $${a.mrr.toLocaleString()}/mo` : ''} — AM: ${a.amName}${a.dropped ? ' ⬇️ dropped this scan' : ''}`\n          ),\n          ``,\n          `_${summary.scanned} accounts scanned | ${summary.tierDrops} tier drop(s) | ${summary.tasksCreated} task(s) created_`,\n        ].join('\\n')\n      : null,\n    // Formatted Slack message for tier drop alert (non-critical)\n    slackDropMessage: summary.tierDrops > 0 && summary.critical === 0\n      ? [\n          `⚠️ *Foresight Nightly Scan — ${summary.date}*`,\n          ``,\n          `*${summary.tierDrops} account(s) dropped tier* — no Critical accounts:`,\n          ...(summary.tierDropAccounts ?? []).map(a =>\n            `• *${a.name}* — ${a.oldTier} → *${a.newTier}* — AM: ${a.amName}`\n          ),\n          ``,\n          `_${summary.scanned} accounts scanned | AM Tasks created in Salesforce_`,\n        ].join('\\n')\n      : null,\n    // Summary for daily log (always posted)\n    slackLogMessage: [\n      `✅ *Foresight Scan Complete — ${summary.date}*`,\n      `${summary.scanned} accounts | 🟢 ${summary.healthy} Healthy | 🟡 ${summary.watch} Watch | 🟠 ${summary.atRisk} At Risk | 🔴 ${summary.critical} Critical`,\n      summary.tierDrops > 0\n        ? `⚠️ ${summary.tierDrops} tier drop(s) detected — ${summary.tasksCreated} AM task(s) created`\n        : `No tier drops — all accounts holding steady`,\n    ].join('\\n'),\n  }\n}];"
+      },
+      "id": "parse-results",
+      "name": "Parse Scan Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "critical-check",
+              "leftValue": "={{ $json.critical }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-critical",
+      "name": "Any Critical Accounts?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SLACK_CHURN_WEBHOOK }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Parse Scan Results').first().json.slackCriticalMessage }) }}",
+        "options": {}
+      },
+      "id": "slack-critical-alert",
+      "name": "Slack — #churn-alerts (Critical)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 180],
+      "notes": "Posts to #churn-alerts Slack channel. Set SLACK_CHURN_WEBHOOK variable in n8n (Settings → Variables) to your Slack Incoming Webhook URL."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "drop-check",
+              "leftValue": "={{ $json.tierDrops }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-drops",
+      "name": "Any Tier Drops?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SLACK_CHURN_WEBHOOK }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Parse Scan Results').first().json.slackDropMessage }) }}",
+        "options": {}
+      },
+      "id": "slack-drop-alert",
+      "name": "Slack — #churn-alerts (Drops)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 360],
+      "notes": "Posts tier drop summary to #churn-alerts when no Critical accounts. Same webhook as critical alert."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SLACK_LOG_WEBHOOK }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Parse Scan Results').first().json.slackLogMessage }) }}",
+        "options": {}
+      },
+      "id": "slack-daily-log",
+      "name": "Slack — #foresight-log (Daily)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 540],
+      "notes": "Posts daily scan summary to #foresight-log (or any ops channel) regardless of outcomes. Set SLACK_LOG_WEBHOOK variable in n8n."
+    }
+  ],
+  "connections": {
+    "Schedule — 11pm Nightly": {
+      "main": [[{ "node": "Foresight — Run Health Scan", "type": "main", "index": 0 }]]
+    },
+    "Foresight — Run Health Scan": {
+      "main": [[{ "node": "Parse Scan Results", "type": "main", "index": 0 }]]
+    },
+    "Parse Scan Results": {
+      "main": [[{ "node": "Any Critical Accounts?", "type": "main", "index": 0 }]]
+    },
+    "Any Critical Accounts?": {
+      "main": [
+        [{ "node": "Slack — #churn-alerts (Critical)", "type": "main", "index": 0 }],
+        [{ "node": "Any Tier Drops?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Any Tier Drops?": {
+      "main": [
+        [{ "node": "Slack — #churn-alerts (Drops)", "type": "main", "index": 0 }],
+        [{ "node": "Slack — #foresight-log (Daily)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Slack — #churn-alerts (Critical)": {
+      "main": [[{ "node": "Slack — #foresight-log (Daily)", "type": "main", "index": 0 }]]
+    },
+    "Slack — #churn-alerts (Drops)": {
+      "main": [[{ "node": "Slack — #foresight-log (Daily)", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": ""
+  },
+  "meta": {
+    "description": "PDM Workflow 3 — Runs nightly at 11pm. Calls sf_run_nightly_health_scan on Railway, parses results, posts Critical account alerts to #churn-alerts and a daily summary to #foresight-log. Requires: (1) SLACK_CHURN_WEBHOOK variable in n8n Settings → Variables, (2) SLACK_LOG_WEBHOOK variable. Both are Slack Incoming Webhook URLs."
+  }
+}
