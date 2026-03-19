@@ -296,6 +296,38 @@ function formatDate(d: string | null | undefined): string {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+// Build a fuzzy SOQL WHERE clause that finds a practice even when the search name
+// has extra words (e.g. "Sloan Canyon Dental Care" matches "Sloan canyon dental").
+// Strategy: extract the 2-3 most significant words and require ALL of them to appear
+// in Company (or fall back to Name), using chained LIKE '%word%' AND conditions.
+const NOISE_WORDS = new Set([
+  'dental', 'dentistry', 'dentist', 'care', 'family', 'group', 'center', 'centre',
+  'associates', 'and', 'the', 'of', 'at', 'dr', 'llc', 'pllc', 'pc', 'inc',
+  'practice', 'clinic', 'office', 'studio', 'smiles', 'smile',
+]);
+
+function buildPracticeNameFilter(rawName: string): string {
+  const escaped = rawName.replace(/'/g, "\\'");
+
+  // Collect unique significant words (length > 2, not noise)
+  const words = [...new Set(
+    rawName.split(/\s+/)
+      .filter(w => w.length > 2 && !NOISE_WORDS.has(w.toLowerCase()))
+  )];
+
+  if (words.length < 2) {
+    // Not enough signal words — fall back to full-name LIKE on both fields
+    return `(Name LIKE '%${escaped}%' OR Company LIKE '%${escaped}%')`;
+  }
+
+  // Require ALL significant words to appear somewhere in Company
+  const companyAnd = words.map(w => `Company LIKE '%${w.replace(/'/g, "\\'")}%'`).join(' AND ');
+  const nameAnd    = words.map(w => `Name    LIKE '%${w.replace(/'/g, "\\'")}%'`).join(' AND ');
+
+  // Also keep a full-name fallback in case the Company is an exact match
+  return `((${companyAnd}) OR (${nameAnd}) OR Company LIKE '%${escaped}%' OR Name LIKE '%${escaped}%')`;
+}
+
 // ─── Tool 1 Handler: sf_research_prospect ────────────────────────────────────
 
 async function handleProspectResearch(rawArgs: unknown): Promise<string> {
@@ -314,7 +346,9 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
   let sfAccount: SFAccount | null = null;
 
   if (!resolvedLeadId && !resolvedAccountId && practiceName) {
-    const escapedName = practiceName.replace(/'/g, "\\'");
+    const nameFilter    = buildPracticeNameFilter(practiceName);
+    const escapedName   = practiceName.replace(/'/g, "\\'");
+    const accountFilter = buildPracticeNameFilter(practiceName).replace(/Company LIKE/g, 'Name LIKE');
 
     const [leadResults, accountResults] = await Promise.all([
       salesforceService.rawQuery<SFLead>(
@@ -323,7 +357,7 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
                 Marketing_Maturity_Score__c, Likelihood_to_Buy_Score__c,
                 Priority_Level__c, Research_Summary__c, Primary_Gap_Type__c
          FROM Lead
-         WHERE (Name LIKE '%${escapedName}%' OR Company LIKE '%${escapedName}%')
+         WHERE ${nameFilter}
            AND IsConverted = false
          ORDER BY LastActivityDate DESC NULLS LAST
          LIMIT 3`
@@ -335,7 +369,7 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
                 Priority_Level__c, Research_Summary__c, Primary_Gap_Type__c,
                 Baseline_Marketing_Maturity__c
          FROM Account
-         WHERE Name LIKE '%${escapedName}%'
+         WHERE (Name LIKE '%${escapedName}%' OR ${accountFilter})
            AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
          ORDER BY LastActivityDate DESC NULLS LAST
          LIMIT 3`
