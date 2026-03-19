@@ -1,0 +1,160 @@
+{
+  "name": "PDM Workflow 1 — Prospect Research → Gamma Deck → Salesforce",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "prospect-research-complete",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook — Research Complete",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "pdm-research-complete"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate incoming research payload\nconst body = $input.first().json.body ?? $input.first().json;\n\nconst required = ['practiceName', 'primaryGapType', 'marketingMaturityScore', 'likelihoodToBuyScore', 'priorityLevel', 'researchSummary'];\nconst missing = required.filter(f => body[f] === undefined || body[f] === null);\n\nif (missing.length > 0) {\n  throw new Error(`Missing required fields: ${missing.join(', ')}`);\n}\n\n// Gap-type → Gamma theme mapping (matches prospectResearch.ts)\nconst themeMap = {\n  SEO:        'consultant',\n  Reputation: 'serene',\n  Video:      'aurora',\n  Authority:  'marine',\n  Maps:       'icebreaker',\n};\n\nconst gapType = body.primaryGapType ?? 'SEO';\nconst themeId = themeMap[gapType] ?? 'consultant';\n\nreturn [{\n  json: {\n    ...body,\n    themeId,\n    deckTitle: `${body.practiceName} — Market Opportunity Assessment`,\n    locationStr: [body.city, body.state].filter(Boolean).join(', '),\n  }\n}];"
+      },
+      "id": "prep-payload",
+      "name": "Prepare Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the Gamma deck content from research data\nconst d = $input.first().json;\n\nconst gapSlides = {\n  SEO: {\n    headline: `The SEO Gap — You're Invisible Where It Counts`,\n    bullets: [\n      `Competitors rank for \"dental implants ${d.locationStr}\" — this practice does not`,\n      `Missing dedicated implant/All-on-4/full-arch landing pages`,\n      `Google Maps pack visibility gap vs. primary competitor`,\n      `Keyword gap growing every month without intervention`,\n    ]\n  },\n  Reputation: {\n    headline: 'The Reputation Gap — Reviews Drive Implant Decisions',\n    bullets: [\n      d.primaryCompetitorName && d.competitorReviewCount\n        ? `${d.primaryCompetitorName}: ${d.competitorReviewCount} reviews (${d.competitorStarRating ?? 'N/A'}⭐) vs. this practice`\n        : 'Primary competitor has significantly more reviews',\n      'Patients comparing practices online choose the practice with more social proof',\n      'Review velocity gap compounds over time — gap widens every month',\n      'Reputation generation and response strategy currently absent',\n    ]\n  },\n  Video: {\n    headline: 'The Video Gap — Authority is Built on Camera',\n    bullets: [\n      'No doctor authority video detected on website or YouTube',\n      'Competitors use patient testimonial video to pre-sell high-value cases',\n      'Before/after video case documentation builds trust before the consultation',\n      'Video is the #1 trust signal for $25K+ implant patients',\n    ]\n  },\n  Authority: {\n    headline: 'The Authority Gap — Patients Need to Trust Before They Spend',\n    bullets: [\n      'Doctor online presence and thought leadership underdeveloped',\n      'Competitors actively showcasing certifications, case studies, specialist positioning',\n      'Trust signals missing: before/after gallery, financing info, credentialed doctor bio',\n      'Implant patients spend $25K+ — authority content converts skeptics',\n    ]\n  },\n  Maps: {\n    headline: 'The Maps Visibility Gap — The Pack is Where Patients Decide',\n    bullets: [\n      d.competitorMapsPosition && d.competitorMapsPosition <= 3\n        ? `${d.primaryCompetitorName ?? 'Primary competitor'} holds Maps pack position #${d.competitorMapsPosition}`\n        : 'Competitors dominating the local Maps pack for implant searches',\n      'Citation consistency, photo count, and Q&As all affect Maps ranking',\n      '90% of patients searching locally never scroll past the Maps pack',\n      'Every week out of the pack = consultations going to competitors',\n    ]\n  }\n};\n\nconst gapType = d.primaryGapType ?? 'SEO';\nconst slide = gapSlides[gapType] ?? gapSlides.SEO;\n\nconst competitorSection = d.primaryCompetitorName\n  ? `## Slide 5: The Competitive Landscape\\n**Primary Threat: ${d.primaryCompetitorName}**${d.primaryCompetitorWebsite ? ` — ${d.primaryCompetitorWebsite}` : ''}\\n${d.competitorReviewCount ? `- Reviews: **${d.competitorReviewCount}** ${d.competitorStarRating ? `(${d.competitorStarRating}⭐)` : ''}` : ''}\\n${d.competitorRunningAds ? '- Running Google Ads: **YES** — actively capturing patients searching now' : ''}\\n${d.competitorMapsPosition && d.competitorMapsPosition <= 3 ? `- Google Maps Pack: **Position #${d.competitorMapsPosition}**` : ''}\\n${d.competitorPressureScore ? `- Competitive Pressure Score: **${d.competitorPressureScore}/100**` : ''}`\n  : `## Slide 5: The Competitive Landscape\\nCompetitors are actively dominating local implant search — full competitive analysis available.`;\n\nconst urgencyLine = d.primaryCompetitorName && d.competitorReviewCount\n  ? `If **${d.primaryCompetitorName}** continues at current velocity, the review gap will double within 12 months.`\n  : `Competitors are actively investing in marketing while this practice's digital position erodes.`;\n\nconst deckContent = `# ${d.practiceName} — Market Opportunity Assessment\n**Prepared by Progressive Dental Marketing | ${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}**\n\n## Slide 1: Title\n**${d.practiceName}**${d.locationStr ? ` | ${d.locationStr}` : ''}\nMarket Opportunity Assessment\nPrepared for Discovery Call\n\n## Slide 2: Market Opportunity\nGrowing market for full-arch implant cases in ${d.locationStr || 'this market'}\nPractices that own the digital presence own the patient flow\nFirst 3 results in local search capture 75%+ of patient clicks\n\n## Slide 3: Where You Stand Today\n**Marketing Maturity Score: ${Math.round(d.marketingMaturityScore)}/100**\n**Market Priority: ${d.priorityLevel}**\n\n${d.researchSummary}\n\n## Slide 4: ${slide.headline}\n${slide.bullets.filter(Boolean).map(b => `- ${b}`).join('\\n')}\n\n${competitorSection}\n\n## Slide 6: The Cost of Standing Still\n${urgencyLine}\nEvery month of inaction widens the competitive gap permanently.\nThe practices that invest in their digital presence now will dominate this market for years.\n\n## Slide 7: The Market Domination Strategy\nFocus: **${gapType}** — the highest-leverage gap in this market\nFastest path: Close the ${gapType} gap to appear where patients are already searching\nTarget: High-income, high-45+ population areas in the 10-30 mile radius\n\n## Slide 8: What Progressive Dental Marketing Delivers\n- Dental implant marketing specialists — exclusive focus on dental practices\n- Full team: PPC, SEO, Social Media, Video Production, Reputation Management\n- Dedicated Account Manager — one point of contact, full accountability\n- Data-driven — every dollar tracked, every result measured\n\n## Slide 9: The 90-Day Roadmap\n**Month 1:** Foundation — audit, strategy, and quick wins on ${gapType}\n**Month 2:** Execution — content, campaigns, and visibility infrastructure live\n**Month 3:** Optimization — compound momentum, first measurable patient inquiry increases\n\n## Slide 10: Next Step\n**Discovery Call — 30 Minutes to Map Your Custom Strategy**\nLet's show you exactly what your competitors are doing — and how we take the lead back.\n${d.priorityLevel === 'Top Priority' || d.priorityLevel === 'High' ? '⚡ High-priority market — schedule within 5 business days.' : \"Strong opportunity — let's start the conversation.\"}`;\n\nreturn [{\n  json: {\n    ...d,\n    deckContent,\n  }\n}];"
+      },
+      "id": "build-deck-content",
+      "name": "Build Deck Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.gamma.app/v1/generate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ inputText: $json.deckContent, format: 'presentation', textMode: 'generate', themeId: $json.themeId, textOptions: { tone: 'professional', audience: 'dental practice owner', amount: 'medium' }, additionalInstructions: 'Professional B2B sales presentation. 10 slides. Data-driven, persuasive, clean. Strong headlines. Minimal text per slide. Emphasize competitive urgency and market opportunity.' }) }}",
+        "options": {}
+      },
+      "id": "gamma-generate",
+      "name": "Gamma — Generate Deck",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300],
+      "notes": "Requires Gamma API key in HTTP Header Auth credentials (Authorization: Bearer YOUR_KEY). Get from gamma.app/settings/api."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract Gamma URL from API response\nconst response = $input.first().json;\n\n// Gamma returns gammaUrl at various paths depending on API version\nconst gammaUrl = response.gammaUrl\n  ?? response.url\n  ?? response.data?.gammaUrl\n  ?? response.data?.url\n  ?? response.result?.gammaUrl;\n\nif (!gammaUrl) {\n  throw new Error(`Gamma did not return a URL. Full response: ${JSON.stringify(response).slice(0, 800)}`);\n}\n\nconst upstream = $('Build Deck Content').first().json;\n\nreturn [{\n  json: {\n    ...upstream,\n    gammaUrl,\n  }\n}];"
+      },
+      "id": "extract-gamma-url",
+      "name": "Extract Gamma URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://salesforce-retention-mcp-production.up.railway.app/mcp",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'sf_save_deck_url', arguments: { leadId: $json.leadId ?? undefined, accountId: $json.accountId ?? undefined, gammaUrl: $json.gammaUrl, deckTitle: $json.deckTitle, primaryGapType: $json.primaryGapType } } }) }}",
+        "options": {}
+      },
+      "id": "sf-save-deck-url",
+      "name": "PDM MCP — sf_save_deck_url",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'success', practice: $('Extract Gamma URL').first().json.practiceName, gapType: $('Extract Gamma URL').first().json.primaryGapType, gammaUrl: $('Extract Gamma URL').first().json.gammaUrl, deckTitle: $('Extract Gamma URL').first().json.deckTitle }) }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond — Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1560, 300]
+    }
+  ],
+  "connections": {
+    "Webhook — Research Complete": {
+      "main": [
+        [
+          { "node": "Prepare Payload", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Prepare Payload": {
+      "main": [
+        [
+          { "node": "Build Deck Content", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build Deck Content": {
+      "main": [
+        [
+          { "node": "Gamma — Generate Deck", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Gamma — Generate Deck": {
+      "main": [
+        [
+          { "node": "Extract Gamma URL", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Extract Gamma URL": {
+      "main": [
+        [
+          { "node": "PDM MCP — sf_save_deck_url", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "PDM MCP — sf_save_deck_url": {
+      "main": [
+        [
+          { "node": "Respond — Success", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "PDM Workflow 1 — Triggered by POST webhook when sf_research_prospect completes. Generates a Gamma prospect deck and writes the URL back to Salesforce via the PDM MCP server. Requires: (1) Gamma API key in HTTP Header Auth credentials, (2) PDM MCP Railway URL in sf_save_deck_url node."
+  }
+}
