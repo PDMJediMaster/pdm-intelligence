@@ -92,10 +92,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $vars.SLACK_CHURN_WEBHOOK }}",
+        "url": "https://chat.googleapis.com/v1/spaces/AAQA-eBqDOw/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EiYWubwUjgBkP4KaRe3cD3rO9o9UsYcvM-8VbVpgL70",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ text: $('Parse Scan Results').first().json.slackCriticalMessage }) }}",
+        "jsonBody": "={{ JSON.stringify({ text: $('Parse Scan Results').first().json.slackCriticalMessage || 'Foresight critical alert fired but message was empty.' }) }}",
         "options": {}
       },
       "id": "slack-critical-alert",
@@ -137,10 +137,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $vars.SLACK_CHURN_WEBHOOK }}",
+        "url": "https://chat.googleapis.com/v1/spaces/AAQA-eBqDOw/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EiYWubwUjgBkP4KaRe3cD3rO9o9UsYcvM-8VbVpgL70",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ text: $('Parse Scan Results').first().json.slackDropMessage }) }}",
+        "jsonBody": "={{ JSON.stringify({ text: $('Parse Scan Results').first().json.slackDropMessage || 'Foresight tier drop alert fired but message was empty.' }) }}",
         "options": {}
       },
       "id": "slack-drop-alert",
@@ -153,10 +153,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $vars.SLACK_LOG_WEBHOOK }}",
+        "url": "https://chat.googleapis.com/v1/spaces/AAQA-eBqDOw/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EiYWubwUjgBkP4KaRe3cD3rO9o9UsYcvM-8VbVpgL70",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ text: $('Parse Scan Results').first().json.slackLogMessage }) }}",
+        "jsonBody": "={{ JSON.stringify({ text: $('Parse Scan Results').first().json.slackLogMessage || 'Foresight daily scan complete.' }) }}",
         "options": {}
       },
       "id": "slack-daily-log",
