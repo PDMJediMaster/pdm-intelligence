@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "foresight": {
+      "type": "http",
+      "url": "https://salesforce-retention-mcp-production.up.railway.app/mcp"
+    }
+  }
+}
