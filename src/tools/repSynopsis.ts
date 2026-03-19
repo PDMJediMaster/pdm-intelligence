@@ -76,13 +76,18 @@ export const repSynopsisTools: Tool[] = [
       'Likelihood to Buy score, leads needing research, leads going cold, open opportunities ' +
       'by stage, and stale deals flagged for action. ' +
       'Use when a rep asks "what should I focus on this week", "show me my pipeline", ' +
-      '"what are my best leads", or "what deals need attention".',
+      '"what are my best leads", or "what deals need attention". ' +
+      'Accepts either owner_name (e.g. "Liam Copsey") or owner_id — name is resolved automatically.',
     inputSchema: {
       type: 'object',
       properties: {
+        owner_name: {
+          type: 'string',
+          description: 'Rep full name (e.g. "Liam Copsey") — tool resolves to User ID automatically. Use instead of owner_id when the name is known.',
+        },
         owner_id: {
           type: 'string',
-          description: 'Salesforce User ID to filter results to a specific rep. Omit to see all reps.',
+          description: 'Salesforce User ID — use only if owner_name is not available.',
         },
         lead_limit: {
           type: 'number',
@@ -101,6 +106,7 @@ export const repSynopsisTools: Tool[] = [
 // ─── Input Schema ─────────────────────────────────────────────────────────────
 
 const RepSynopsisArgs = z.object({
+  owner_name:     z.string().optional(),
   owner_id:       z.string().optional(),
   lead_limit:     z.number().min(1).max(50).default(15),
   opp_stale_days: z.number().min(1).max(90).default(14),
@@ -153,10 +159,32 @@ function staleOppAction(stage: string | undefined, daysSinceModified: number): s
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
-async function handleRepPipelineSynopsis(rawArgs: unknown): Promise<string> {
-  const { owner_id, lead_limit, opp_stale_days } = RepSynopsisArgs.parse(rawArgs ?? {});
+interface SFUser { Id: string; Name: string; }
 
-  const ownerFilter    = owner_id ? `AND OwnerId = '${owner_id}'` : `AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'`;
+async function handleRepPipelineSynopsis(rawArgs: unknown): Promise<string> {
+  const { owner_name, owner_id: rawOwnerId, lead_limit, opp_stale_days } = RepSynopsisArgs.parse(rawArgs ?? {});
+
+  // Resolve owner_name → owner_id if a name was provided
+  let owner_id = rawOwnerId;
+  let resolvedRepName: string | undefined;
+
+  if (owner_name && !owner_id) {
+    const escaped = owner_name.replace(/'/g, "\\'");
+    const users = await salesforceService.rawQuery<SFUser>(
+      `SELECT Id, Name FROM User WHERE Name LIKE '%${escaped}%' AND IsActive = true LIMIT 5`
+    );
+    if (users.length === 0) {
+      return `❌ No active Salesforce user found matching "${owner_name}". Check the spelling and try again.`;
+    }
+    if (users.length > 1) {
+      const names = users.map(u => `${u.Name} (${u.Id})`).join('\n- ');
+      return `⚠️ Multiple users match "${owner_name}":\n- ${names}\n\nPlease re-run with the exact name or provide the owner_id directly.`;
+    }
+    owner_id = users[0].Id;
+    resolvedRepName = users[0].Name;
+  }
+
+  const ownerFilter = owner_id ? `AND OwnerId = '${owner_id}'` : `AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'`;
   const deadStatusList = DEAD_LEAD_STATUSES.map(s => `'${s}'`).join(', ');
 
   // ── Parallel queries ──────────────────────────────────────────────────────
@@ -218,7 +246,8 @@ async function handleRepPipelineSynopsis(rawArgs: unknown): Promise<string> {
 
   lines.push(`# 📋 Rep Pipeline Synopsis`);
   lines.push(`**${today}**`);
-  if (owner_id) lines.push(`**Filtered to:** ${owner_id}`);
+  if (resolvedRepName) lines.push(`**Rep:** ${resolvedRepName}`);
+  else if (owner_id)   lines.push(`**Filtered to:** ${owner_id}`);
   lines.push('');
   lines.push(`| | Count |`);
   lines.push(`|---|---|`);
