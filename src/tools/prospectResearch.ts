@@ -1,32 +1,34 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Prospect Research Tool — sf_research_prospect
+// Prospect Research Tools
 //
-// Implements the full PDM Sales Market Research GPT as a governed MCP tool.
+// Two-tool architecture — no internal Anthropic API call required:
 //
-// Flow:
-//   1. Salesforce pre-check — search Lead + Account for existing records
-//   2. Web research via Anthropic API (claude-opus-4-6 + web_search)
-//   3. Score extraction from structured response section
-//   4. Salesforce write-back — scores → Lead or Account record
-//   5. Return full markdown research report
+//   Tool 1: sf_research_prospect
+//     - Salesforce pre-check (Lead + Account lookup)
+//     - Returns SF context + full PDM research instructions
+//     - Claude Desktop runs the web research natively
+//
+//   Tool 2: sf_save_research_scores
+//     - Accepts scores extracted by Claude from the research output
+//     - Creates Lead if no existing record found
+//     - Writes all scores to Lead and/or Account in Salesforce
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import Anthropic from '@anthropic-ai/sdk';
 import { salesforceService } from '../services/salesforce.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const WILLIAM_SUMMERS_USER_ID = '005PU000001eUQDYA2';
 
-const VALID_PRIORITY_LEVELS  = ['Low', 'Moderate', 'High', 'Top Priority'] as const;
+const VALID_PRIORITY_LEVELS = ['Low', 'Moderate', 'High', 'Top Priority'] as const;
 const VALID_GAP_TYPES        = ['SEO', 'Reputation', 'Video', 'Authority', 'Maps'] as const;
 
 type PriorityLevel = typeof VALID_PRIORITY_LEVELS[number];
 type GapType       = typeof VALID_GAP_TYPES[number];
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Salesforce Record Types ──────────────────────────────────────────────────
 
 interface SFLead {
   Id: string;
@@ -64,30 +66,16 @@ interface SFAccount {
   Baseline_Marketing_Maturity__c?: number;
 }
 
-interface ExtractedScores {
-  marketing_maturity_score: number;
-  likelihood_to_buy_score: number;
-  priority_level: PriorityLevel;
-  primary_gap_type: GapType;
-  research_summary: string;
-}
-
-// ─── Tool Definition ─────────────────────────────────────────────────────────
+// ─── Tool Definitions ─────────────────────────────────────────────────────────
 
 export const prospectResearchTools: Tool[] = [
   {
     name: 'sf_research_prospect',
     description:
-      'Runs the full PDM Sales Market Research GPT analysis on a dental practice prospect. ' +
-      'Checks Salesforce first for existing Lead/Account records and prior research history. ' +
-      'Then runs comprehensive web research covering: market snapshot (demographics, competition radius, ' +
-      'affluent ZIPs), competitive landscape (dominant competitor, easiest to disrupt), practice evaluation ' +
-      '(website, branding, trust signals, doctor authority), SEO gap analysis (implant/full-arch/All-on-4 pages, ' +
-      'keyword gaps, local targeting), Google Ads opportunity, reputation analysis (rating, review count, sentiment), ' +
-      'Google Maps visibility, opportunity gaps, marketing maturity score (0-100), likelihood to buy score (0-100), ' +
-      'priority level, market domination strategy, strategic recommendations, and sales enablement summary ' +
-      '(talking points, discovery questions, objections, positioning statement). ' +
-      'Writes all scores back to the Salesforce Lead or Account record after research completes. ' +
+      'Step 1 of prospect research. Checks Salesforce for existing Lead/Account records and returns ' +
+      'the full PDM Sales Market Research GPT instructions for Claude to execute via web search. ' +
+      'After calling this tool, Claude should immediately run the web research as instructed in the ' +
+      'output, then call sf_save_research_scores to write results back to Salesforce. ' +
       'Use when a rep asks to research a prospect, wants market analysis before a discovery call, ' +
       'or asks "what do we know about X dental practice".',
     inputSchema: {
@@ -95,7 +83,7 @@ export const prospectResearchTools: Tool[] = [
       properties: {
         practiceName: {
           type: 'string',
-          description: 'Name of the dental practice (e.g., "Smith Implant Center", "Advanced Dental Arts")',
+          description: 'Name of the dental practice',
         },
         city: {
           type: 'string',
@@ -107,11 +95,11 @@ export const prospectResearchTools: Tool[] = [
         },
         websiteUrl: {
           type: 'string',
-          description: 'Practice website URL — use instead of or in addition to name/location',
+          description: 'Practice website URL',
         },
         leadId: {
           type: 'string',
-          description: 'Salesforce Lead ID if already known — skips lookup, writes scores directly to this record',
+          description: 'Salesforce Lead ID if already known — skips name lookup',
         },
         accountId: {
           type: 'string',
@@ -121,9 +109,59 @@ export const prospectResearchTools: Tool[] = [
       required: [],
     },
   },
+  {
+    name: 'sf_save_research_scores',
+    description:
+      'Step 2 of prospect research. Saves scores and summary from completed web research back to ' +
+      'Salesforce. Creates a new Lead if no existing record was found. Call this immediately after ' +
+      'completing the research requested by sf_research_prospect.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        practiceName: {
+          type: 'string',
+          description: 'Practice name — used to create a new Lead if no existing record',
+        },
+        city:       { type: 'string', description: 'City — stored on new Lead if created' },
+        state:      { type: 'string', description: 'State — stored on new Lead if created' },
+        websiteUrl: { type: 'string', description: 'Website — stored on new Lead if created' },
+        leadId: {
+          type: 'string',
+          description: 'Salesforce Lead ID returned by sf_research_prospect (if a record was found)',
+        },
+        accountId: {
+          type: 'string',
+          description: 'Salesforce Account ID returned by sf_research_prospect (if a record was found)',
+        },
+        marketingMaturityScore: {
+          type: 'number',
+          description: 'Marketing maturity score 0-100',
+        },
+        likelihoodToBuyScore: {
+          type: 'number',
+          description: 'Likelihood to buy score 0-100',
+        },
+        priorityLevel: {
+          type: 'string',
+          enum: ['Low', 'Moderate', 'High', 'Top Priority'],
+          description: 'Priority classification',
+        },
+        primaryGapType: {
+          type: 'string',
+          enum: ['SEO', 'Reputation', 'Video', 'Authority', 'Maps'],
+          description: 'Primary marketing gap identified',
+        },
+        researchSummary: {
+          type: 'string',
+          description: 'One-paragraph summary of key findings, max 500 characters',
+        },
+      },
+      required: ['marketingMaturityScore', 'likelihoodToBuyScore', 'priorityLevel', 'primaryGapType', 'researchSummary'],
+    },
+  },
 ];
 
-// ─── Input Schema ─────────────────────────────────────────────────────────────
+// ─── Input Schemas ────────────────────────────────────────────────────────────
 
 const ProspectResearchArgs = z.object({
   practiceName: z.string().optional(),
@@ -134,157 +172,44 @@ const ProspectResearchArgs = z.object({
   accountId:    z.string().optional(),
 });
 
-// ─── Research System Prompt ───────────────────────────────────────────────────
+const SaveResearchScoresArgs = z.object({
+  practiceName:           z.string().optional(),
+  city:                   z.string().optional(),
+  state:                  z.string().optional(),
+  websiteUrl:             z.string().optional(),
+  leadId:                 z.string().optional(),
+  accountId:              z.string().optional(),
+  marketingMaturityScore: z.number().min(0).max(100),
+  likelihoodToBuyScore:   z.number().min(0).max(100),
+  priorityLevel:          z.enum(VALID_PRIORITY_LEVELS),
+  primaryGapType:         z.enum(VALID_GAP_TYPES),
+  researchSummary:        z.string().max(500),
+});
 
-const RESEARCH_SYSTEM_PROMPT = `You are PDM's Sales Market Research GPT — the AI engine for Progressive Dental Marketing, a dental implant marketing agency.
-
-Your job is to produce a comprehensive market research analysis on a dental practice prospect. You have access to web search and should use it extensively to gather real, current data.
-
-ACCURACY RULES (enforce strictly):
-- Never fabricate missing data
-- Clearly label assumptions and estimates with "[Estimated]" or "[Assumed]"
-- Do not claim Progressive Dental works with the practice without public evidence
-- If data is unavailable, state: "Could not be confirmed from public sources"
-- Tie every recommendation to observed gaps, competitor behavior, or market data
-
-OUTPUT STRUCTURE (follow exactly — each section is required):
-1. Practice Overview (name, location, website, specialties observed)
-2. Market Snapshot (10-30 mile radius population 45+, median income, affluent ZIPs, retirement communities, implant demand signals)
-3. Competitive Landscape (who dominates local implant/full-arch market, easiest competitor to disrupt, which competitor applies most pressure, and why)
-4. Practice Marketing Evaluation (website quality, mobile experience, branding, trust signals, doctor authority/bio, before/after gallery, financing CTA, video content)
-5. SEO Gap Analysis (do they have dedicated implant/full-arch/All-on-4 pages, keyword targeting assessment, local landing pages, Google Maps relevance signals)
-6. Google Ads Opportunity (are they running ads, competitor ad presence, estimated opportunity)
-7. Reputation Analysis (Google rating, approximate review count, sentiment themes from visible reviews, review velocity vs competitors)
-8. Google Maps & Local Visibility (Maps ranking signals, NAP consistency, citation quality)
-9. Opportunity Gaps (what they're missing, what competitors do better, what happens if they do nothing)
-10. Marketing Maturity Score (0-100 scale — 0=no digital presence, 100=dominant market leader)
-11. Likelihood to Buy Score (0-100 scale — based on gap size, budget signals, decision-maker accessibility, competition urgency)
-12. Priority Level (Low / Moderate / High / Top Priority)
-13. Market Domination Strategy (most important channel to win first, fastest path to growth, biggest competitor weakness to exploit, best ZIP codes to target, niche positioning angle, short-term moves (0-90 days), long-term moves (6-18 months))
-14. Strategic Recommendations (3-5 specific, evidence-based recommendations — each with what, why, and expected impact)
-15. Sales Enablement Summary:
-    - Executive Summary for the Rep (2-3 sentences, call-ready)
-    - Why This Matters to This Prospect (specific to their situation)
-    - Talking Points (7-10 concise, conversation-ready)
-    - Discovery Questions (5-8 questions to ask on the call)
-    - Likely Objections and Responses (3-5 objections with specific responses)
-    - Positioning Statement (one paragraph — how PDM uniquely helps this practice)
-    - Recommended Next Step (specific action for the rep)
-
-At the very end of your response, output a JSON scores block EXACTLY in this format (no deviation):
-
-\`\`\`json
-{
-  "marketing_maturity_score": <integer 0-100>,
-  "likelihood_to_buy_score": <integer 0-100>,
-  "priority_level": "<Low|Moderate|High|Top Priority>",
-  "primary_gap_type": "<SEO|Reputation|Video|Authority|Maps>",
-  "research_summary": "<one paragraph summary of key findings and opportunity, max 500 chars>"
-}
-\`\`\``;
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function buildResearchPrompt(
-  practiceName: string | undefined,
-  city: string | undefined,
-  state: string | undefined,
-  websiteUrl: string | undefined,
-  sfContext: string,
-): string {
-  const locationStr = [city, state].filter(Boolean).join(', ');
-  const identifier = practiceName
-    ? `"${practiceName}"${locationStr ? ` in ${locationStr}` : ''}`
-    : websiteUrl ?? 'the practice';
-
-  return `Research this dental practice prospect for Progressive Dental Marketing:
-
-**Practice:** ${practiceName ?? 'Unknown — use website to identify'}
-**Location:** ${locationStr || 'Unknown — determine from website if possible'}
-**Website:** ${websiteUrl ?? 'Search for it'}
-
-${sfContext}
-
-Conduct a thorough web research analysis on ${identifier}. Search for:
-- Their website, Google Maps listing, Google reviews
-- Their SEO presence (search "dental implants ${locationStr}" and similar queries)
-- Competitor practices in the area
-- Their social media presence
-- Any ads they are running
-- Patient reviews and reputation signals
-
-Produce the complete Sales Market Research GPT analysis as instructed in your system prompt. Use real data from your searches. Label any estimates clearly.`;
-}
-
-function extractScores(responseText: string): ExtractedScores | null {
-  // Find the JSON scores block
-  const jsonMatch = responseText.match(/```json\s*(\{[\s\S]*?\})\s*```/);
-  if (!jsonMatch) return null;
-
-  try {
-    const raw = JSON.parse(jsonMatch[1]) as Record<string, unknown>;
-
-    const mms = Number(raw['marketing_maturity_score']);
-    const ltb = Number(raw['likelihood_to_buy_score']);
-    const pl  = String(raw['priority_level'] ?? '');
-    const pgt = String(raw['primary_gap_type'] ?? '');
-    const rs  = String(raw['research_summary'] ?? '').slice(0, 500);
-
-    if (
-      isNaN(mms) || mms < 0 || mms > 100 ||
-      isNaN(ltb) || ltb < 0 || ltb > 100 ||
-      !VALID_PRIORITY_LEVELS.includes(pl as PriorityLevel) ||
-      !VALID_GAP_TYPES.includes(pgt as GapType)
-    ) {
-      return null;
-    }
-
-    return {
-      marketing_maturity_score: Math.round(mms),
-      likelihood_to_buy_score:  Math.round(ltb),
-      priority_level:           pl as PriorityLevel,
-      primary_gap_type:         pgt as GapType,
-      research_summary:         rs,
-    };
-  } catch {
-    return null;
-  }
-}
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatDate(d: string | null | undefined): string {
   if (!d) return 'Unknown';
-  return new Date(d).toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
-  });
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-// ─── Handler ─────────────────────────────────────────────────────────────────
+// ─── Tool 1 Handler: sf_research_prospect ────────────────────────────────────
 
 async function handleProspectResearch(rawArgs: unknown): Promise<string> {
-  const {
-    practiceName,
-    city,
-    state,
-    websiteUrl,
-    leadId,
-    accountId,
-  } = ProspectResearchArgs.parse(rawArgs ?? {});
+  const { practiceName, city, state, websiteUrl, leadId, accountId } =
+    ProspectResearchArgs.parse(rawArgs ?? {});
 
-  // Validate — need at minimum a name or a website
   if (!practiceName && !websiteUrl && !leadId && !accountId) {
     return '❌ Please provide at least a practice name, website URL, or Salesforce record ID.';
   }
 
-  const lines: string[] = [];
+  // ── Salesforce Pre-Check ──────────────────────────────────────────────────
 
-  // ── Step 1: Salesforce Pre-Check ─────────────────────────────────────────
-
-  let resolvedLeadId   = leadId;
+  let resolvedLeadId    = leadId;
   let resolvedAccountId = accountId;
-  let sfLead: SFLead | null = null;
+  let sfLead: SFLead | null    = null;
   let sfAccount: SFAccount | null = null;
 
-  // If direct IDs weren't provided, search by name
   if (!resolvedLeadId && !resolvedAccountId && practiceName) {
     const escapedName = practiceName.replace(/'/g, "\\'");
 
@@ -314,28 +239,21 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
       ),
     ]);
 
-    if (leadResults.length > 0) {
-      sfLead = leadResults[0];
-      resolvedLeadId = sfLead.Id;
-    }
-    if (accountResults.length > 0) {
-      sfAccount = accountResults[0];
-      resolvedAccountId = sfAccount.Id;
-    }
+    if (leadResults.length > 0) { sfLead = leadResults[0]; resolvedLeadId = sfLead.Id; }
+    if (accountResults.length > 0) { sfAccount = accountResults[0]; resolvedAccountId = sfAccount.Id; }
   } else {
-    // Fetch the provided IDs
     if (resolvedLeadId) {
-      const results = await salesforceService.rawQuery<SFLead>(
+      const r = await salesforceService.rawQuery<SFLead>(
         `SELECT Id, Name, Company, Status, OwnerId, Owner.Name,
                 LastActivityDate, Website, City, State,
                 Marketing_Maturity_Score__c, Likelihood_to_Buy_Score__c,
                 Priority_Level__c, Research_Summary__c, Primary_Gap_Type__c
          FROM Lead WHERE Id = '${resolvedLeadId}' LIMIT 1`
       );
-      if (results.length > 0) sfLead = results[0];
+      if (r.length > 0) sfLead = r[0];
     }
     if (resolvedAccountId) {
-      const results = await salesforceService.rawQuery<SFAccount>(
+      const r = await salesforceService.rawQuery<SFAccount>(
         `SELECT Id, Name, Status__c, OwnerId, Owner.Name,
                 LastActivityDate, Website, BillingCity, BillingState,
                 Marketing_Maturity_Score__c, Likelihood_to_Buy_Score__c,
@@ -343,231 +261,216 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
                 Baseline_Marketing_Maturity__c
          FROM Account WHERE Id = '${resolvedAccountId}' LIMIT 1`
       );
-      if (results.length > 0) sfAccount = results[0];
+      if (r.length > 0) sfAccount = r[0];
     }
   }
 
-  // Build SF context string for the research prompt
-  let sfContext = '';
-  if (sfLead) {
-    sfContext += `**Salesforce Lead Record Found:**\n`;
-    sfContext += `- Lead ID: ${sfLead.Id}\n`;
-    sfContext += `- Name: ${sfLead.Name}\n`;
-    sfContext += `- Company: ${sfLead.Company ?? 'Not set'}\n`;
-    sfContext += `- Status: ${sfLead.Status ?? 'Unknown'}\n`;
-    sfContext += `- Owner: ${(sfLead.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown'}\n`;
-    sfContext += `- Last Activity: ${formatDate(sfLead.LastActivityDate)}\n`;
-    if (sfLead.Website) sfContext += `- Website on file: ${sfLead.Website}\n`;
-    if (sfLead.Marketing_Maturity_Score__c != null) {
-      sfContext += `- Previous Maturity Score: ${sfLead.Marketing_Maturity_Score__c}\n`;
-      sfContext += `- Previous LTB Score: ${sfLead.Likelihood_to_Buy_Score__c ?? 'N/A'}\n`;
-      sfContext += `- Previous Priority: ${sfLead.Priority_Level__c ?? 'N/A'}\n`;
-    }
-    if (sfLead.Research_Summary__c) {
-      sfContext += `- Previous Research Summary: ${sfLead.Research_Summary__c}\n`;
-    }
-    sfContext += '\n';
-  }
-  if (sfAccount) {
-    sfContext += `**Salesforce Account Record Found (EXISTING CLIENT):**\n`;
-    sfContext += `- Account ID: ${sfAccount.Id}\n`;
-    sfContext += `- Name: ${sfAccount.Name}\n`;
-    sfContext += `- Status: ${sfAccount.Status__c ?? 'Unknown'}\n`;
-    sfContext += `- Owner: ${(sfAccount.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown'}\n`;
-    sfContext += `- Last Activity: ${formatDate(sfAccount.LastActivityDate)}\n`;
-    if (sfAccount.Website) sfContext += `- Website on file: ${sfAccount.Website}\n`;
-    if (sfAccount.Baseline_Marketing_Maturity__c != null) {
-      sfContext += `- Baseline Maturity (at close): ${sfAccount.Baseline_Marketing_Maturity__c}\n`;
-    }
-    sfContext += '\n';
-  }
-  if (!sfLead && !sfAccount) {
-    sfContext = '**Salesforce:** No existing Lead or Account record found for this practice. This is a cold prospect.\n\n';
-  }
+  // ── Build Output ──────────────────────────────────────────────────────────
 
-  // ── Step 2: Web Research via Anthropic API ────────────────────────────────
+  const lines: string[] = [];
+  const locationStr = [city, state].filter(Boolean).join(', ');
 
-  lines.push(`# 🔍 PDM Sales Market Research`);
-  lines.push(`**Practice:** ${practiceName ?? websiteUrl ?? 'Unknown'}`);
-  if (city || state) lines.push(`**Location:** ${[city, state].filter(Boolean).join(', ')}`);
-  if (websiteUrl) lines.push(`**Website:** ${websiteUrl}`);
-  lines.push(`**Generated:** ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`);
+  lines.push(`# 🔍 PDM Prospect Research: ${practiceName ?? websiteUrl ?? 'Unknown Practice'}`);
+  if (locationStr) lines.push(`**Location:** ${locationStr}`);
+  if (websiteUrl)  lines.push(`**Website:** ${websiteUrl}`);
+  lines.push(`**Date:** ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`);
   lines.push('');
 
-  if (sfLead || sfAccount) {
-    lines.push('## 📋 Salesforce Record Status');
-    if (sfLead) {
-      lines.push(`✅ **Lead found:** ${sfLead.Name} (${sfLead.Company ?? ''}) — Owner: ${(sfLead.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown'}`);
-      if (sfLead.Marketing_Maturity_Score__c != null) {
-        lines.push(`📊 **Prior research on file** — Maturity: ${sfLead.Marketing_Maturity_Score__c}/100 | LTB: ${sfLead.Likelihood_to_Buy_Score__c ?? 'N/A'}/100 | Priority: ${sfLead.Priority_Level__c ?? 'N/A'}`);
-        lines.push('*Running fresh research to update scores...*');
-      }
+  // SF record status
+  if (sfLead) {
+    lines.push(`## 📋 Salesforce Record Found`);
+    lines.push(`✅ **Lead:** ${sfLead.Name} (${sfLead.Company ?? ''}) | Owner: ${(sfLead.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown'} | Last Activity: ${formatDate(sfLead.LastActivityDate)}`);
+    lines.push(`- **Lead ID:** \`${sfLead.Id}\` ← pass this to sf_save_research_scores`);
+    if (sfLead.Marketing_Maturity_Score__c != null) {
+      lines.push(`- **Prior research on file:** Maturity ${sfLead.Marketing_Maturity_Score__c}/100 | LTB ${sfLead.Likelihood_to_Buy_Score__c ?? 'N/A'}/100 | Priority: ${sfLead.Priority_Level__c ?? 'N/A'}`);
+      if (sfLead.Research_Summary__c) lines.push(`- **Prior summary:** ${sfLead.Research_Summary__c}`);
+      lines.push(`*Running fresh research to update scores.*`);
     }
-    if (sfAccount) {
-      lines.push(`⚠️ **EXISTING CLIENT found:** ${sfAccount.Name} — Status: ${sfAccount.Status__c ?? 'Unknown'}`);
-      if (sfAccount.Baseline_Marketing_Maturity__c != null) {
-        lines.push(`📊 **Baseline maturity at close:** ${sfAccount.Baseline_Marketing_Maturity__c}/100`);
-      }
+    lines.push('');
+  } else if (sfAccount) {
+    lines.push(`## ⚠️ Existing Client Found in Salesforce`);
+    lines.push(`**Account:** ${sfAccount.Name} | Status: ${sfAccount.Status__c ?? 'Unknown'} | Owner: ${(sfAccount.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown'}`);
+    lines.push(`- **Account ID:** \`${sfAccount.Id}\` ← pass this to sf_save_research_scores`);
+    if (sfAccount.Baseline_Marketing_Maturity__c != null) {
+      lines.push(`- **Baseline maturity (at close):** ${sfAccount.Baseline_Marketing_Maturity__c}/100`);
     }
+    lines.push('');
+  } else {
+    lines.push(`## 📋 Salesforce Status`);
+    lines.push(`No existing Lead or Account found — this is a cold prospect. sf_save_research_scores will create a new Lead automatically.`);
     lines.push('');
   }
 
   lines.push('---');
   lines.push('');
+  lines.push(`## 🔎 Research Instructions`);
+  lines.push('');
+  lines.push(`Please run a comprehensive PDM Sales Market Research analysis on this practice now using web search. Cover the following in order:`);
+  lines.push('');
+  lines.push(`**Practice to research:** ${practiceName ?? 'Identify from website'}`);
+  lines.push(`**Location:** ${locationStr || 'Determine from website'}`);
+  lines.push(`**Website:** ${websiteUrl ?? 'Search for it'}`);
+  lines.push('');
+  lines.push(`**Search for:**`);
+  lines.push(`- Their website, Google Maps listing, and Google reviews`);
+  lines.push(`- SEO presence: search "dental implants ${locationStr}" and "All-on-4 ${locationStr}"`);
+  lines.push(`- Competitor practices targeting implant/full-arch cases in the area`);
+  lines.push(`- Social media presence and any ads running`);
+  lines.push(`- Patient reviews and reputation signals`);
+  lines.push('');
+  lines.push(`**Produce the complete research report covering:**`);
+  lines.push(`1. Practice Overview`);
+  lines.push(`2. Market Snapshot (10-30 mile radius: population 45+, median income, affluent ZIPs)`);
+  lines.push(`3. Competitive Landscape (who dominates local implant/full-arch, easiest to disrupt, most pressure)`);
+  lines.push(`4. Practice Marketing Evaluation (website, mobile, branding, doctor authority, before/after, financing CTA)`);
+  lines.push(`5. SEO Gap Analysis (implant/full-arch/All-on-4 pages, keyword gaps, Maps relevance)`);
+  lines.push(`6. Google Ads Opportunity`);
+  lines.push(`7. Reputation Analysis (rating, review count, sentiment, velocity vs competitors)`);
+  lines.push(`8. Google Maps & Local Visibility`);
+  lines.push(`9. Opportunity Gaps`);
+  lines.push(`10. Market Domination Strategy`);
+  lines.push(`11. Strategic Recommendations (3-5 specific, evidence-based)`);
+  lines.push(`12. Sales Enablement Summary:`);
+  lines.push(`    - Executive Summary for the Rep (2-3 sentences, call-ready)`);
+  lines.push(`    - Talking Points (7-10)`);
+  lines.push(`    - Discovery Questions (5-8)`);
+  lines.push(`    - Likely Objections and Responses (3-5)`);
+  lines.push(`    - Positioning Statement`);
+  lines.push(`    - Recommended Next Step`);
+  lines.push('');
+  lines.push(`**ACCURACY RULES:** Never fabricate data. Label estimates as [Estimated]. Tie every recommendation to observed gaps or market data.`);
+  lines.push('');
+  lines.push(`---`);
+  lines.push('');
+  lines.push(`## 📥 After Research — Save to Salesforce`);
+  lines.push('');
+  lines.push(`When research is complete, call **sf_save_research_scores** with:`);
+  lines.push(`- \`practiceName\`: "${practiceName ?? ''}"`);
+  lines.push(`- \`city\`: "${city ?? ''}"`);
+  lines.push(`- \`state\`: "${state ?? ''}"`);
+  lines.push(`- \`websiteUrl\`: "${websiteUrl ?? ''}"`);
+  if (resolvedLeadId)    lines.push(`- \`leadId\`: "${resolvedLeadId}"`);
+  if (resolvedAccountId) lines.push(`- \`accountId\`: "${resolvedAccountId}"`);
+  lines.push(`- \`marketingMaturityScore\`: <your assessed score 0-100>`);
+  lines.push(`- \`likelihoodToBuyScore\`: <your assessed score 0-100>`);
+  lines.push(`- \`priorityLevel\`: <"Low" | "Moderate" | "High" | "Top Priority">`);
+  lines.push(`- \`primaryGapType\`: <"SEO" | "Reputation" | "Video" | "Authority" | "Maps">`);
+  lines.push(`- \`researchSummary\`: <one paragraph, max 500 chars>`);
 
-  const researchPrompt = buildResearchPrompt(practiceName, city, state, websiteUrl, sfContext);
+  return lines.join('\n');
+}
 
-  // Call Anthropic API with web search, streaming, adaptive thinking
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// ─── Tool 2 Handler: sf_save_research_scores ─────────────────────────────────
 
-  let researchOutput = '';
-  let continueMessages: Anthropic.MessageParam[] = [
-    { role: 'user', content: researchPrompt },
-  ];
+async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
+  const {
+    practiceName,
+    city,
+    state,
+    websiteUrl,
+    leadId,
+    accountId,
+    marketingMaturityScore,
+    likelihoodToBuyScore,
+    priorityLevel,
+    primaryGapType,
+    researchSummary,
+  } = SaveResearchScoresArgs.parse(rawArgs ?? {});
 
-  const MAX_CONTINUATIONS = 5;
-  let continuations = 0;
-
-  while (continuations < MAX_CONTINUATIONS) {
-    const stream = anthropic.messages.stream({
-      model:   'claude-opus-4-6',
-      max_tokens: 8000,
-      thinking: { type: 'adaptive' },
-      system:  RESEARCH_SYSTEM_PROMPT,
-      tools:   [{ type: 'web_search_20260209', name: 'web_search' }],
-      messages: continueMessages,
-    });
-
-    const message = await stream.finalMessage();
-
-    // Collect text from this iteration
-    for (const block of message.content) {
-      if (block.type === 'text') {
-        researchOutput += block.text;
-      }
-    }
-
-    if (message.stop_reason === 'end_turn') break;
-
-    // Handle pause_turn — server-side tool loop hit iteration limit, continue
-    if (message.stop_reason === 'pause_turn') {
-      continueMessages.push({ role: 'assistant', content: message.content });
-      continuations++;
-      continue;
-    }
-
-    break;
-  }
-
-  if (!researchOutput) {
-    lines.push('⚠️ Research did not produce text output. The web search may have been unable to find sufficient data. Please try again or provide a website URL.');
-    return lines.join('\n');
-  }
-
-  // ── Step 3: Extract Scores ────────────────────────────────────────────────
-
-  const scores = extractScores(researchOutput);
-
-  // Remove the raw JSON scores block from the output (we'll render it nicely)
-  const cleanedResearch = researchOutput.replace(/```json[\s\S]*?```\s*$/, '').trim();
-  lines.push(cleanedResearch);
-
-  // ── Step 4: Salesforce Write-Back ─────────────────────────────────────────
-
+  const lines: string[] = [];
   const writeErrors: string[] = [];
 
-  if (scores) {
-    const scoreFields: Record<string, unknown> = {
-      Marketing_Maturity_Score__c: scores.marketing_maturity_score,
-      Likelihood_to_Buy_Score__c:  scores.likelihood_to_buy_score,
-      Priority_Level__c:           scores.priority_level,
-      Primary_Gap_Type__c:         scores.primary_gap_type,
-      Research_Summary__c:         scores.research_summary,
-    };
+  let resolvedLeadId    = leadId;
+  let resolvedAccountId = accountId;
+  let wasLeadCreated    = false;
 
-    // Auto-create Lead if no existing record found
-    if (!resolvedLeadId && !resolvedAccountId) {
-      try {
-        const nameForEmail = (practiceName ?? websiteUrl ?? 'prospect')
-          .toLowerCase().replace(/[^a-z0-9]/g, '.');
-        const newLeadFields: Record<string, unknown> = {
-          LastName:   practiceName ?? websiteUrl ?? 'Unknown Practice',
-          Company:    practiceName ?? websiteUrl ?? 'Unknown Practice',
-          Email:      `research.${nameForEmail}@progressivedental.com`,
-          LeadSource: 'PDM Research Tool',
-          Status:     'Open - Not Contacted',
-        };
-        if (city)       newLeadFields['City']    = city;
-        if (state)      newLeadFields['State']   = state;
-        if (websiteUrl) newLeadFields['Website'] = websiteUrl;
+  const scoreFields: Record<string, unknown> = {
+    Marketing_Maturity_Score__c: Math.round(marketingMaturityScore),
+    Likelihood_to_Buy_Score__c:  Math.round(likelihoodToBuyScore),
+    Priority_Level__c:           priorityLevel as PriorityLevel,
+    Primary_Gap_Type__c:         primaryGapType as GapType,
+    Research_Summary__c:         researchSummary.slice(0, 500),
+  };
 
-        resolvedLeadId = await salesforceService.createRecord('Lead', newLeadFields);
-      } catch (err) {
-        writeErrors.push(`Lead create failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
+  // Auto-create Lead if no existing record
+  if (!resolvedLeadId && !resolvedAccountId) {
+    try {
+      const nameForEmail = (practiceName ?? websiteUrl ?? 'prospect')
+        .toLowerCase().replace(/[^a-z0-9]/g, '.');
+      const newLeadFields: Record<string, unknown> = {
+        LastName:   practiceName ?? websiteUrl ?? 'Unknown Practice',
+        Company:    practiceName ?? websiteUrl ?? 'Unknown Practice',
+        Email:      `research.${nameForEmail}@progressivedental.com`,
+        LeadSource: 'PDM Research Tool',
+        Status:     'Open - Not Contacted',
+      };
+      if (city)       newLeadFields['City']    = city;
+      if (state)      newLeadFields['State']   = state;
+      if (websiteUrl) newLeadFields['Website'] = websiteUrl;
+
+      resolvedLeadId = await salesforceService.createRecord('Lead', newLeadFields);
+      wasLeadCreated = true;
+    } catch (err) {
+      writeErrors.push(`Lead create failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
 
-    // Write to Lead
-    if (resolvedLeadId) {
-      try {
-        await salesforceService.updateRecord('Lead', resolvedLeadId, scoreFields);
-      } catch (err) {
-        writeErrors.push(`Lead update failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
+  // Write scores to Lead
+  if (resolvedLeadId) {
+    try {
+      await salesforceService.updateRecord('Lead', resolvedLeadId, scoreFields);
+    } catch (err) {
+      writeErrors.push(`Lead update failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
 
-    // Write to Account if found
-    if (resolvedAccountId) {
+  // Write scores to Account (lock Baseline if first research)
+  if (resolvedAccountId) {
+    try {
+      const accountResults = await salesforceService.rawQuery<SFAccount>(
+        `SELECT Id, Baseline_Marketing_Maturity__c FROM Account WHERE Id = '${resolvedAccountId}' LIMIT 1`
+      );
       const accountFields: Record<string, unknown> = { ...scoreFields };
-      // Lock Baseline only if it hasn't been set yet
-      if (sfAccount && sfAccount.Baseline_Marketing_Maturity__c == null) {
-        accountFields['Baseline_Marketing_Maturity__c'] = scores.marketing_maturity_score;
+      if (accountResults.length > 0 && accountResults[0].Baseline_Marketing_Maturity__c == null) {
+        accountFields['Baseline_Marketing_Maturity__c'] = Math.round(marketingMaturityScore);
       }
-      try {
-        await salesforceService.updateRecord('Account', resolvedAccountId, accountFields);
-      } catch (err) {
-        writeErrors.push(`Account update failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      await salesforceService.updateRecord('Account', resolvedAccountId, accountFields);
+    } catch (err) {
+      writeErrors.push(`Account update failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
 
-    // Add score summary section
-    lines.push('');
-    lines.push('---');
-    lines.push('');
-    lines.push('## 📊 Research Scores Summary');
-    lines.push('');
-    lines.push(`| Metric | Score |`);
-    lines.push(`|---|---|`);
-    lines.push(`| Marketing Maturity Score | **${scores.marketing_maturity_score}/100** |`);
-    lines.push(`| Likelihood to Buy Score | **${scores.likelihood_to_buy_score}/100** |`);
-    lines.push(`| Priority Level | **${scores.priority_level}** |`);
-    lines.push(`| Primary Gap Type | **${scores.primary_gap_type}** |`);
-    lines.push('');
+  // Build result summary
+  lines.push(`## 📊 Research Scores Saved`);
+  lines.push('');
+  lines.push(`| Metric | Score |`);
+  lines.push(`|---|---|`);
+  lines.push(`| Marketing Maturity Score | **${Math.round(marketingMaturityScore)}/100** |`);
+  lines.push(`| Likelihood to Buy Score | **${Math.round(likelihoodToBuyScore)}/100** |`);
+  lines.push(`| Priority Level | **${priorityLevel}** |`);
+  lines.push(`| Primary Gap Type | **${primaryGapType}** |`);
+  lines.push('');
+  lines.push(`**Salesforce Write-Back:**`);
 
-    const sfStatus: string[] = [];
-    if (resolvedLeadId && !writeErrors.some(e => e.startsWith('Lead'))) {
-      const wasNew = !sfLead;
-      sfStatus.push(`✅ Lead ${resolvedLeadId} ${wasNew ? 'created and scores written' : 'updated'}`);
-    }
-    if (resolvedAccountId && !writeErrors.some(e => e.startsWith('Account'))) {
-      sfStatus.push(`✅ Account ${resolvedAccountId} updated`);
-    }
-    if (writeErrors.length > 0) {
-      writeErrors.forEach(e => sfStatus.push(`❌ ${e}`));
-    }
+  if (resolvedLeadId && !writeErrors.some(e => e.startsWith('Lead'))) {
+    lines.push(`- ✅ Lead \`${resolvedLeadId}\` ${wasLeadCreated ? 'created and scores written' : 'updated with new scores'}`);
+  }
+  if (resolvedAccountId && !writeErrors.some(e => e.startsWith('Account'))) {
+    lines.push(`- ✅ Account \`${resolvedAccountId}\` updated`);
+  }
+  writeErrors.forEach(e => lines.push(`- ❌ ${e}`));
 
-    lines.push('**Salesforce Write-Back:**');
-    sfStatus.forEach(s => lines.push(`- ${s}`));
-  } else {
+  if (writeErrors.length === 0) {
     lines.push('');
-    lines.push('⚠️ *Could not parse structured scores from research output. Scores were not written to Salesforce. The research content above is still valid.*');
+    lines.push(`✅ Research complete. Intelligence is now persisted in Salesforce.`);
   }
 
   return lines.join('\n');
 }
 
-// ─── Exports ─────────────────────────────────────────────────────────────────
+// ─── Exports ──────────────────────────────────────────────────────────────────
 
 export const prospectResearchHandlers: Record<string, (args: unknown) => Promise<string>> = {
-  sf_research_prospect: handleProspectResearch,
+  sf_research_prospect:     handleProspectResearch,
+  sf_save_research_scores:  handleSaveResearchScores,
 };
