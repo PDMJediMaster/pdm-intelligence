@@ -1,9 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Lead Intelligence Tool — Foresight by PDM
+// Lead Intelligence Tool — Prophet by PDM
 //
 // sf_get_lead_intelligence
 //   Full pre-call brief for Sales Reps on any inbound or outbound Lead.
-//   Pulls Pardot engagement data, Foresight research scores, activity history,
+//   Pulls Pardot engagement data, Prophet research scores, activity history,
 //   competitor snapshots, and linked Gamma decks — everything a rep needs
 //   before a discovery call, in one command.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -44,7 +44,7 @@ interface SFLead {
   LastActivityDate?: string;
   IsConverted?: boolean;
   ConvertedDate?: string;
-  // Foresight research fields
+  // Prophet research fields
   Marketing_Maturity_Score__c?: number;
   Likelihood_to_Buy_Score__c?: number;
   Priority_Level__c?: string;
@@ -105,7 +105,7 @@ export const leadIntelligenceTools: Tool[] = [
     description:
       'Full pre-call intelligence brief for a Sales Rep on any Lead. ' +
       'Pulls Pardot engagement score and grade, UTM source and campaign attribution, ' +
-      'Foresight research scores (Marketing Maturity, Likelihood to Buy, Priority Level), ' +
+      'Prophet research scores (Marketing Maturity, Likelihood to Buy, Priority Level), ' +
       'recent activity history, linked competitor snapshots, and any generated Gamma prospect decks. ' +
       'Use before any discovery call, follow-up, or when a rep asks "what do we know about this lead?" ' +
       'Accepts lead name (fuzzy search on Name or Company) or Salesforce Lead ID.',
@@ -322,9 +322,9 @@ async function handleLeadIntelligence(rawArgs: unknown): Promise<string> {
   }
   lines.push('');
 
-  // ── Foresight Research ────────────────────────────────────────────────────
+  // ── Prophet Research ────────────────────────────────────────────────────
   const hasResearch = sfLead.Marketing_Maturity_Score__c != null || sfLead.Likelihood_to_Buy_Score__c != null;
-  lines.push(`## 🔍 Foresight Research`);
+  lines.push(`## 🔍 Prophet Research`);
   if (hasResearch) {
     if (sfLead.Marketing_Maturity_Score__c != null)
       lines.push(`- **Marketing Maturity:** ${sfLead.Marketing_Maturity_Score__c}/100`);
@@ -339,7 +339,7 @@ async function handleLeadIntelligence(rawArgs: unknown): Promise<string> {
       lines.push(`  > ${sfLead.Research_Summary__c}`);
     }
   } else {
-    lines.push(`- No Foresight research on file.`);
+    lines.push(`- No Prophet research on file.`);
     lines.push(`- 💡 Run \`sf_research_prospect\` to generate market analysis, scores, and a Gamma prospect deck.`);
   }
   lines.push('');

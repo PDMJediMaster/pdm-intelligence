@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Renewal Proof Package — Foresight by PDM
+// Renewal Proof Package — Prophet by PDM
 //
 // sf_get_renewal_proof_package
 //   Assembles the complete renewal conversation for an Account Manager.

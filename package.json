@@ -1,7 +1,7 @@
 {
   "name": "salesforce-retention-mcp",
   "version": "1.0.0",
-  "description": "Foresight by PDM — AI intelligence platform connecting Claude to Salesforce. See what's coming before it arrives.",
+  "description": "Prophet by PDM — AI intelligence platform connecting Claude to Salesforce. See what's coming before it arrives.",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

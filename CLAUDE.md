@@ -1,4 +1,4 @@
-# CLAUDE.md — Foresight by PDM
+# CLAUDE.md — Prophet by PDM
 ## Master Brain File — Read This Completely Before Taking Any Action
 
 > *"See what's coming before it arrives."*
@@ -36,7 +36,7 @@ Walt Disney told his people when they showed him something: **"Plus It."** Meani
 
 ## Platform Overview — What This System Is
 
-**Foresight** is PDM's AI intelligence platform. It connects Claude Desktop directly to Salesforce via a TypeScript MCP (Model Context Protocol) server using jsforce. It gives Account Managers and Sales Reps AI-powered intelligence about their clients and prospects without leaving their workflow — seeing churn, renewals, competitive threats, and opportunities before they become obvious.
+**Prophet** is PDM's AI intelligence platform. It connects Claude Desktop directly to Salesforce via a TypeScript MCP (Model Context Protocol) server using jsforce. It gives Account Managers and Sales Reps AI-powered intelligence about their clients and prospects without leaving their workflow — seeing churn, renewals, competitive threats, and opportunities before they become obvious.
 
 **The business problem it solves:** PDM Account Managers manage 50+ client relationships simultaneously. Without AI assistance, they walk into renewal calls unprepared, miss churn signals until it's too late, can't quickly research new prospects, and spend hours on admin work that should take minutes.
 

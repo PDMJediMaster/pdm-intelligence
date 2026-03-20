@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Health Scanner — Foresight by PDM
+// Health Scanner — Prophet by PDM
 //
 // sf_run_nightly_health_scan
 //   Batch health score recalculation for all active accounts.
@@ -258,9 +258,9 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
       // Create Task for AM when tier drops
       if (result.dropped) {
         try {
-          const taskSubject = `⚠️ Foresight Alert: ${result.name} dropped to ${result.newTier}`;
+          const taskSubject = `⚠️ Prophet Alert: ${result.name} dropped to ${result.newTier}`;
           const taskDesc = [
-            `Foresight Nightly Health Scan — ${today}`,
+            `Prophet Nightly Health Scan — ${today}`,
             ``,
             `Account: ${result.name}`,
             `Previous Tier: ${result.oldTier ?? 'Unknown'}`,
@@ -297,7 +297,7 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
 
   const lines: string[] = [];
 
-  lines.push(`# ${dry_run ? '🔍 DRY RUN — ' : ''}Foresight Nightly Health Scan`);
+  lines.push(`# ${dry_run ? '🔍 DRY RUN — ' : ''}Prophet Nightly Health Scan`);
   lines.push(`**Date:** ${today} | **Accounts Scanned:** ${results.length}`);
   lines.push('');
 
