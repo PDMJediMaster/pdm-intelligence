@@ -1,0 +1,259 @@
+{
+  "name": "PDM Workflow 8 — ZIP to City/State Auto-Populate",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "wf8-node-001",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [200, 400],
+      "typeVersion": 1.2
+    },
+
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://progressivedental.my.salesforce.com/services/data/v62.0/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "sendQueryParameters": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "SELECT Id, PostalCode FROM Lead WHERE PostalCode != null AND City = null AND IsConverted = false LIMIT 50"
+            }
+          ]
+        }
+      },
+      "id": "wf8-node-002",
+      "name": "Query Leads Missing City",
+      "type": "n8n-nodes-base.httpRequest",
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "salesforce-account-2",
+          "name": "Salesforce account 2"
+        }
+      },
+      "position": [440, 200],
+      "typeVersion": 4.2
+    },
+
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://progressivedental.my.salesforce.com/services/data/v62.0/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "sendQueryParameters": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "SELECT Id, MailingPostalCode FROM Contact WHERE MailingPostalCode != null AND MailingCity = null LIMIT 50"
+            }
+          ]
+        }
+      },
+      "id": "wf8-node-003",
+      "name": "Query Contacts Missing City",
+      "type": "n8n-nodes-base.httpRequest",
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "salesforce-account-2",
+          "name": "Salesforce account 2"
+        }
+      },
+      "position": [440, 400],
+      "typeVersion": 4.2
+    },
+
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://progressivedental.my.salesforce.com/services/data/v62.0/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "sendQueryParameters": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "SELECT Id, BillingPostalCode FROM Account WHERE BillingPostalCode != null AND BillingCity = null LIMIT 50"
+            }
+          ]
+        }
+      },
+      "id": "wf8-node-004",
+      "name": "Query Accounts Missing City",
+      "type": "n8n-nodes-base.httpRequest",
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "salesforce-account-2",
+          "name": "Salesforce account 2"
+        }
+      },
+      "position": [440, 600],
+      "typeVersion": 4.2
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const records = $input.first().json.records || [];\nreturn records.map(r => ({ json: { id: r.Id, zip: r.PostalCode, objectType: 'Lead' } }));"
+      },
+      "id": "wf8-node-005",
+      "name": "Tag Leads",
+      "type": "n8n-nodes-base.code",
+      "position": [680, 200],
+      "typeVersion": 2
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const records = $input.first().json.records || [];\nreturn records.map(r => ({ json: { id: r.Id, zip: r.MailingPostalCode, objectType: 'Contact' } }));"
+      },
+      "id": "wf8-node-006",
+      "name": "Tag Contacts",
+      "type": "n8n-nodes-base.code",
+      "position": [680, 400],
+      "typeVersion": 2
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const records = $input.first().json.records || [];\nreturn records.map(r => ({ json: { id: r.Id, zip: r.BillingPostalCode, objectType: 'Account' } }));"
+      },
+      "id": "wf8-node-007",
+      "name": "Tag Accounts",
+      "type": "n8n-nodes-base.code",
+      "position": [680, 600],
+      "typeVersion": 2
+    },
+
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "wf8-node-008",
+      "name": "Merge All Records",
+      "type": "n8n-nodes-base.merge",
+      "position": [920, 400],
+      "typeVersion": 3
+    },
+
+    {
+      "parameters": {
+        "batchSize": 1
+      },
+      "id": "wf8-node-009",
+      "name": "Process One at a Time",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [1120, 400],
+      "typeVersion": 3
+    },
+
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.zippopotam.us/us/{{ $json.zip }}"
+      },
+      "id": "wf8-node-010",
+      "name": "Lookup ZIP",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1320, 400],
+      "typeVersion": 4.2
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const zipData = $input.first().json;\nif (!zipData.places || !zipData.places[0]) return [];\n\nconst city  = zipData.places[0]['place name'];\nconst state = zipData.places[0]['state abbreviation'];\nconst record = $('Process One at a Time').item.json;\n\nconst sfBase = 'https://progressivedental.my.salesforce.com/services/data/v62.0/sobjects';\n\nlet patchUrl;\nlet patchBody;\n\nif (record.objectType === 'Lead') {\n  patchUrl  = `${sfBase}/Lead/${record.id}`;\n  patchBody = { City: city, State: state };\n} else if (record.objectType === 'Contact') {\n  patchUrl  = `${sfBase}/Contact/${record.id}`;\n  patchBody = { MailingCity: city, MailingState: state };\n} else {\n  patchUrl  = `${sfBase}/Account/${record.id}`;\n  patchBody = { BillingCity: city, BillingState: state };\n}\n\nreturn [{ json: { patchUrl, patchBody } }];"
+      },
+      "id": "wf8-node-011",
+      "name": "Build PATCH Payload",
+      "type": "n8n-nodes-base.code",
+      "position": [1520, 400],
+      "typeVersion": 2
+    },
+
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $json.patchUrl }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}"
+      },
+      "id": "wf8-node-012",
+      "name": "Update Salesforce Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "salesforce-account-2",
+          "name": "Salesforce account 2"
+        }
+      },
+      "position": [1720, 400],
+      "typeVersion": 4.2
+    }
+  ],
+
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [
+          { "node": "Query Leads Missing City",    "type": "main", "index": 0 },
+          { "node": "Query Contacts Missing City", "type": "main", "index": 0 },
+          { "node": "Query Accounts Missing City", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Query Leads Missing City": {
+      "main": [[{ "node": "Tag Leads", "type": "main", "index": 0 }]]
+    },
+    "Query Contacts Missing City": {
+      "main": [[{ "node": "Tag Contacts", "type": "main", "index": 0 }]]
+    },
+    "Query Accounts Missing City": {
+      "main": [[{ "node": "Tag Accounts", "type": "main", "index": 0 }]]
+    },
+    "Tag Leads": {
+      "main": [[{ "node": "Merge All Records", "type": "main", "index": 0 }]]
+    },
+    "Tag Contacts": {
+      "main": [[{ "node": "Merge All Records", "type": "main", "index": 1 }]]
+    },
+    "Tag Accounts": {
+      "main": [[{ "node": "Merge All Records", "type": "main", "index": 2 }]]
+    },
+    "Merge All Records": {
+      "main": [[{ "node": "Process One at a Time", "type": "main", "index": 0 }]]
+    },
+    "Process One at a Time": {
+      "main": [[{ "node": "Lookup ZIP", "type": "main", "index": 0 }]]
+    },
+    "Lookup ZIP": {
+      "main": [[{ "node": "Build PATCH Payload", "type": "main", "index": 0 }]]
+    },
+    "Build PATCH Payload": {
+      "main": [[{ "node": "Update Salesforce Record", "type": "main", "index": 0 }]]
+    },
+    "Update Salesforce Record": {
+      "main": [[{ "node": "Process One at a Time", "type": "main", "index": 0 }]]
+    }
+  },
+
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

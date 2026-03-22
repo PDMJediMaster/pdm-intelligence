@@ -1,0 +1,267 @@
+{
+  "name": "PDM Workflow 4 — Proactive Lead Intelligence",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "wf4-node-001",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [260, 300],
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://progressivedental.my.salesforce.com/services/data/v62.0/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "sendQueryParameters": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "SELECT Id, FirstName, LastName, Name, Company, Phone, Email, City, State, PostalCode, Website, OwnerId, Owner.Name, LeadSource, Status, CreatedDate FROM Lead WHERE CreatedDate >= LAST_N_MINUTES:6 AND Prophet_Notified__c = false AND Company != null AND (Phone != null OR Email != null) ORDER BY CreatedDate DESC LIMIT 10"
+            }
+          ]
+        }
+      },
+      "id": "wf4-node-002",
+      "name": "Query New Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "salesforce-account-2",
+          "name": "Salesforce account 2"
+        }
+      },
+      "position": [480, 200],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://progressivedental.my.salesforce.com/services/data/v62.0/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "sendQueryParameters": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "SELECT Id, FirstName, LastName, Name, Phone, Email, AccountId, Account.Name, Account.Status__c, Account.TCI_Status__c, Account.OwnerId, Account.Owner.Name FROM Contact WHERE LastModifiedDate >= LAST_N_MINUTES:6 AND Prophet_Notified__c = false AND AccountId != null AND Account.Status__c NOT IN ('Active', 'Renewal', 'Reinstated', 'Paused', 'Delinquent', 'Pending') AND (Account.TCI_Status__c = null OR Account.TCI_Status__c != 'Member') ORDER BY LastModifiedDate DESC LIMIT 10"
+            }
+          ]
+        }
+      },
+      "id": "wf4-node-003",
+      "name": "Query Re-Engagement Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "salesforce-account-2",
+          "name": "Salesforce account 2"
+        }
+      },
+      "position": [480, 420],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "wf4-node-004",
+      "name": "Merge Lead + Contact Results",
+      "type": "n8n-nodes-base.merge",
+      "position": [700, 300],
+      "typeVersion": 3
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine Lead and Contact records into a unified format\nconst allItems = $input.all();\nconst records = [];\n\nfor (const item of allItems) {\n  const data = item.json;\n  \n  // Skip the wrapper object if it has no records (empty query result)\n  if (data.totalSize !== undefined) continue;\n  \n  // Determine if this is a Lead or Contact based on available fields\n  const isLead = data.Company !== undefined || data.Status !== undefined;\n  \n  if (isLead) {\n    const locationStr = [data.City, data.State].filter(Boolean).join(', ') || data.PostalCode || '';\n    records.push({\n      type: 'lead',\n      objectType: 'Lead',\n      id: data.Id,\n      name: data.Name || `${data.FirstName || ''} ${data.LastName || ''}`.trim(),\n      practice: data.Company || 'Unknown Practice',\n      phone: data.Phone || 'N/A',\n      email: data.Email || 'N/A',\n      city: data.City || '',\n      state: data.State || '',\n      zip: data.PostalCode || '',\n      location: locationStr,\n      website: data.Website || '',\n      repName: data.Owner?.Name || 'Unassigned',\n      repId: data.OwnerId || '',\n      source: data.LeadSource || 'Unknown',\n      createdDate: data.CreatedDate\n    });\n  } else {\n    // Contact re-engagement\n    const account = data.Account || {};\n    records.push({\n      type: 'contact',\n      objectType: 'Contact',\n      id: data.Id,\n      name: data.Name || `${data.FirstName || ''} ${data.LastName || ''}`.trim(),\n      practice: account.Name || 'Unknown Practice',\n      phone: data.Phone || 'N/A',\n      email: data.Email || 'N/A',\n      city: '',\n      state: '',\n      zip: '',\n      location: '',\n      website: '',\n      repName: account.Owner?.Name || 'Unassigned',\n      repId: account.OwnerId || '',\n      accountId: data.AccountId,\n      accountStatus: account.Status__c || 'Unknown',\n      tciStatus: account.TCI_Status__c || 'None',\n      source: 'Re-Engagement'\n    });\n  }\n}\n\nif (records.length === 0) {\n  return [{ json: { hasRecords: false, count: 0 } }];\n}\n\nreturn records.map(r => ({ json: { ...r, hasRecords: true } }));"
+      },
+      "id": "wf4-node-005",
+      "name": "Format Records",
+      "type": "n8n-nodes-base.code",
+      "position": [920, 300],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "wf4-cond-001",
+              "leftValue": "={{ $json.hasRecords }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "wf4-node-006",
+      "name": "Has New Records?",
+      "type": "n8n-nodes-base.if",
+      "position": [1140, 300],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "wf4-node-007",
+      "name": "Process One at a Time",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [1360, 180],
+      "typeVersion": 3
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://progressivedental.my.salesforce.com/services/data/v62.0/sobjects/{{ $json.objectType }}/{{ $json.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={\n  \"Prophet_Notified__c\": true\n}"
+      },
+      "id": "wf4-node-008",
+      "name": "Mark Prophet Notified",
+      "type": "n8n-nodes-base.httpRequest",
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "salesforce-account-2",
+          "name": "Salesforce account 2"
+        }
+      },
+      "position": [1580, 100],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://progressivedental.my.salesforce.com/services/data/v62.0/sobjects/Task",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={\n  \"Subject\": \"🎯 Prophet: Research {{ $('Process One at a Time').item.json.practice }}\",\n  \"WhoId\": \"{{ $('Process One at a Time').item.json.id }}\",\n  \"OwnerId\": \"{{ $('Process One at a Time').item.json.repId }}\",\n  \"Status\": \"Not Started\",\n  \"ActivityDate\": \"{{ new Date().toISOString().split('T')[0] }}\",\n  \"Description\": \"New {{ $('Process One at a Time').item.json.type }} received. Run in Claude Desktop:\\n\\nsf_research_prospect for {{ $('Process One at a Time').item.json.practice }}{{ $('Process One at a Time').item.json.location ? ' in ' + $('Process One at a Time').item.json.location : '' }}{{ $('Process One at a Time').item.json.website ? '\\nWebsite: ' + $('Process One at a Time').item.json.website : '' }}\\n\\nPhone: {{ $('Process One at a Time').item.json.phone }}\\nEmail: {{ $('Process One at a Time').item.json.email }}\\n\\nProphet will deliver full market analysis, competitive landscape, SEO gaps, and Gamma deck.\"\n}"
+      },
+      "id": "wf4-node-009",
+      "name": "Create Prophet Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "salesforce-account-2",
+          "name": "Salesforce account 2"
+        }
+      },
+      "position": [1580, 260],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $('Process One at a Time').item.json;\n\nconst trigger = r.type === 'lead'\n  ? '🎯 *New Lead — Prophet Research Ready*'\n  : '🔄 *Re-Engagement Alert — Practice Revisiting PDM*';\n\n// Build location cleanly — never duplicate zip when city/state are blank\nconst locationParts = [];\nif (r.city) locationParts.push(r.city);\nif (r.state) locationParts.push(r.state);\nif (r.zip) locationParts.push(r.zip);\nconst locationDisplay = locationParts.length > 0 ? locationParts.join(', ') : null;\n\n// Command uses zip for geographic precision if available\nconst command = r.zip\n  ? `sf_research_prospect for ${r.practice} in ${r.zip}`\n  : `sf_research_prospect for ${r.practice}`;\n\nconst lines = [trigger, ''];\nlines.push(`*Practice:* ${r.practice}`);\nlines.push(`*Contact:* ${r.name}`);\nlines.push(`*Phone:* ${r.phone}`);\nlines.push(`*Email:* ${r.email}`);\nif (locationDisplay) lines.push(`*Location:* ${locationDisplay}`);\nif (r.website) lines.push(`*Website:* ${r.website}`);\nif (r.source && r.source !== 'Unknown') lines.push(`*Source:* ${r.source}`);\nif (r.type === 'contact') lines.push(`*Account Status:* ${r.accountStatus} | TCI: ${r.tciStatus}`);\nlines.push(`*Assigned Rep:* ${r.repName}`);\nlines.push('');\nlines.push('*Run Prophet now in Claude Desktop:*');\nlines.push(`\\`${command}\\``);\nlines.push('');\nlines.push('_Prophet delivers full market brief, competitive landscape, SEO gaps, and Gamma deck in 2 minutes._');\n\nreturn [{ json: { text: lines.join('\\n') } }];"
+      },
+      "id": "wf4-node-010",
+      "name": "Build Google Chat Message",
+      "type": "n8n-nodes-base.code",
+      "position": [1580, 420],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://chat.googleapis.com/v1/spaces/AAQA-eBqDOw/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EiYWubwUjgBkP4KaRe3cD3rO9o9UsYcvM-8VbVpgL70",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={\n  \"text\": {{ JSON.stringify($json.text) }}\n}"
+      },
+      "id": "wf4-node-011",
+      "name": "Post to Google Chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1800, 420],
+      "typeVersion": 4.2
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [
+        [
+          { "node": "Query New Leads", "type": "main", "index": 0 },
+          { "node": "Query Re-Engagement Contacts", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Query New Leads": {
+      "main": [
+        [{ "node": "Merge Lead + Contact Results", "type": "main", "index": 0 }]
+      ]
+    },
+    "Query Re-Engagement Contacts": {
+      "main": [
+        [{ "node": "Merge Lead + Contact Results", "type": "main", "index": 1 }]
+      ]
+    },
+    "Merge Lead + Contact Results": {
+      "main": [
+        [{ "node": "Format Records", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format Records": {
+      "main": [
+        [{ "node": "Has New Records?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has New Records?": {
+      "main": [
+        [{ "node": "Process One at a Time", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Process One at a Time": {
+      "main": [
+        [
+          { "node": "Mark Prophet Notified", "type": "main", "index": 0 },
+          { "node": "Create Prophet Task", "type": "main", "index": 0 },
+          { "node": "Build Google Chat Message", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build Google Chat Message": {
+      "main": [
+        [{ "node": "Post to Google Chat", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

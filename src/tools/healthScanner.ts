@@ -22,7 +22,7 @@ import { z } from 'zod';
 import { salesforceService } from '../services/salesforce.js';
 import { proxyHealthScore } from '../services/healthScoring.js';
 import { WILLIAM_SUMMERS_USER_ID } from './accountManagement.js';
-import { INACTIVE_STATUS_VALUES } from './healthReports.js';
+import { INACTIVE_STATUS_VALUES, ACTIVE_CLIENT_FILTER } from './healthReports.js';
 
 // ─── Salesforce Types ─────────────────────────────────────────────────────────
 
@@ -121,7 +121,6 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
   const { dry_run, limit } = HealthScanArgs.parse(rawArgs ?? {});
 
   const today = new Date().toISOString().slice(0, 10);
-  const inactiveStatusSoql = INACTIVE_STATUS_VALUES.map(s => `'${s}'`).join(', ');
 
   // ── Step 1: Query all active accounts ────────────────────────────────────
 
@@ -133,7 +132,7 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
             Cancellation_or_Pause_Request_Date__c, Flagged_Status__c,
             Delinquent__c, Total_Monthly_Recurring_Amount__c
      FROM Account
-     WHERE Status__c NOT IN (${inactiveStatusSoql})
+     WHERE ${ACTIVE_CLIENT_FILTER}
        AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
      ORDER BY LastActivityDate ASC NULLS FIRST
      LIMIT ${limit}`
@@ -233,6 +232,232 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
     });
   }
 
+  // ── Orphaned Zoom Audit ────────────────────────────────────────────────────
+  // Find VideoCall records with no account linked + Zoom Tasks with no WhatId.
+  // Attempt to match back to Contacts/Accounts via email (high confidence)
+  // or participant display name (low confidence, single-match only).
+
+  interface OrphanVideoCall {
+    Id: string;
+    Name?: string;
+    StartDateTime?: string;
+    DurationInSeconds?: number;
+    OwnerId?: string;
+    Owner?: { Name: string };
+  }
+  interface OrphanVCParticipant {
+    Id: string;
+    VideoCallId: string;
+    Name?: string;
+    Email?: string;
+  }
+  interface OrphanZoomTask {
+    Id: string;
+    Subject?: string;
+    ActivityDate?: string;
+    OwnerId?: string;
+    Owner?: { Name: string };
+    WhoId?: string;
+    Who?: { Name: string; Email?: string };
+    ZVC__Zoom_Meeting__c?: string;
+    ZVC__Zoom_Meeting__r?: { ZVC__Meeting_Topic__c?: string } | null;
+    ZVC__Zoom_Call_Log__c?: string;
+  }
+  interface ZoomContactMatch {
+    Id: string;
+    Name: string;
+    Email?: string;
+    Phone?: string;
+    MobilePhone?: string;
+    AccountId: string;
+    Account?: { Name: string; Owner?: { Name: string } };
+  }
+
+  const zoomLookback     = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const zoomLookbackDate = zoomLookback.split('T')[0];
+
+  const [orphanedVideoCalls, orphanedMeetingTasks, orphanedPhoneTasks] = await Promise.all([
+    salesforceService.rawQuery<OrphanVideoCall>(
+      `SELECT Id, Name, StartDateTime, DurationInSeconds, OwnerId, Owner.Name
+       FROM VideoCall
+       WHERE RelatedRecordId = null
+         AND StartDateTime >= ${zoomLookback}
+         AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
+       ORDER BY StartDateTime DESC
+       LIMIT 100`
+    ).catch(() => [] as OrphanVideoCall[]),
+
+    salesforceService.rawQuery<OrphanZoomTask>(
+      `SELECT Id, Subject, ActivityDate, OwnerId, Owner.Name,
+              WhoId, Who.Name, Who.Email,
+              ZVC__Zoom_Meeting__c,
+              ZVC__Zoom_Meeting__r.ZVC__Meeting_Topic__c
+       FROM Task
+       WHERE ZVC__Zoom_Meeting__c != null
+         AND WhatId = null
+         AND ActivityDate >= ${zoomLookbackDate}
+         AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
+       ORDER BY ActivityDate DESC
+       LIMIT 50`
+    ).catch(() => [] as OrphanZoomTask[]),
+
+    salesforceService.rawQuery<OrphanZoomTask>(
+      `SELECT Id, Subject, ActivityDate, OwnerId, Owner.Name,
+              WhoId, Who.Name, Who.Email,
+              ZVC__Zoom_Call_Log__c
+       FROM Task
+       WHERE ZVC__Zoom_Call_Log__c != null
+         AND WhatId = null
+         AND ActivityDate >= ${zoomLookbackDate}
+         AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
+       ORDER BY ActivityDate DESC
+       LIMIT 50`
+    ).catch(() => [] as OrphanZoomTask[]),
+  ]);
+
+  let orphanParticipants: OrphanVCParticipant[] = [];
+  if (orphanedVideoCalls.length > 0) {
+    const callIds = orphanedVideoCalls.map(c => `'${c.Id}'`).join(',');
+    orphanParticipants = await salesforceService.rawQuery<OrphanVCParticipant>(
+      `SELECT Id, VideoCallId, Name, Email
+       FROM VideoCallParticipant
+       WHERE VideoCallId IN (${callIds})
+       LIMIT 500`
+    ).catch(() => [] as OrphanVCParticipant[]);
+  }
+
+  const orphanEmailSet = new Set<string>();
+  const orphanNameSet  = new Set<string>();
+  for (const p of orphanParticipants) {
+    if (p.Email) orphanEmailSet.add(p.Email.toLowerCase().trim());
+    if (p.Name)  orphanNameSet.add(p.Name.trim());
+  }
+  for (const t of [...orphanedMeetingTasks, ...orphanedPhoneTasks]) {
+    const who = t.Who as { Name?: string; Email?: string } | undefined;
+    if (who?.Email) orphanEmailSet.add(who.Email.toLowerCase().trim());
+    if (who?.Name)  orphanNameSet.add(who.Name.trim());
+  }
+
+  let zoomContactMatches: ZoomContactMatch[] = [];
+  const emailList = [...orphanEmailSet];
+  const nameList  = [...orphanNameSet];
+  if (emailList.length > 0 || nameList.length > 0) {
+    const emailClause = emailList.length > 0
+      ? `Email IN (${emailList.map(e => `'${e}'`).join(',')})`
+      : null;
+    const nameClause = nameList.length > 0 && emailList.length === 0
+      ? `Name IN (${nameList.map(n => `'${n}'`).join(',')})`
+      : null;
+    const whereClause = [emailClause, nameClause].filter(Boolean).join(' OR ');
+    if (whereClause) {
+      zoomContactMatches = await salesforceService.rawQuery<ZoomContactMatch>(
+        `SELECT Id, Name, Email, Phone, MobilePhone, AccountId,
+                Account.Name, Account.Owner.Name
+         FROM Contact
+         WHERE (${whereClause})
+           AND AccountId != null
+         LIMIT 200`
+      ).catch(() => [] as ZoomContactMatch[]);
+    }
+  }
+
+  const emailToZoomContact = new Map<string, ZoomContactMatch>();
+  const nameToZoomContacts = new Map<string, ZoomContactMatch[]>();
+  for (const c of zoomContactMatches) {
+    if (c.Email) emailToZoomContact.set(c.Email.toLowerCase().trim(), c);
+    const key = c.Name.trim().toLowerCase();
+    if (!nameToZoomContacts.has(key)) nameToZoomContacts.set(key, []);
+    nameToZoomContacts.get(key)!.push(c);
+  }
+
+  type CallMatch = {
+    callDate:         string;
+    durationMins:     number;
+    amName:           string;
+    amId:             string;
+    participantCount: number;
+    likelyAccounts:   Array<{ accountName: string; matchedVia: string; confidence: 'High' | 'Low' }>;
+  };
+
+  const callMatchResults: CallMatch[] = orphanedVideoCalls.map(call => {
+    const participants   = orphanParticipants.filter(p => p.VideoCallId === call.Id);
+    const likelyAccounts: CallMatch['likelyAccounts'] = [];
+    const seenAccounts   = new Set<string>();
+    for (const p of participants) {
+      if (p.Email) {
+        const c = emailToZoomContact.get(p.Email.toLowerCase().trim());
+        if (c && !seenAccounts.has(c.AccountId)) {
+          seenAccounts.add(c.AccountId);
+          likelyAccounts.push({
+            accountName: (c.Account as { Name?: string } | undefined)?.Name ?? 'Unknown',
+            matchedVia:  `${p.Email} → ${c.Name}`,
+            confidence:  'High',
+          });
+        }
+      }
+      if (p.Name && likelyAccounts.length === 0) {
+        const key     = p.Name.trim().toLowerCase();
+        const matches = nameToZoomContacts.get(key);
+        if (matches?.length === 1 && !seenAccounts.has(matches[0].AccountId)) {
+          seenAccounts.add(matches[0].AccountId);
+          likelyAccounts.push({
+            accountName: (matches[0].Account as { Name?: string } | undefined)?.Name ?? 'Unknown',
+            matchedVia:  `Name match: "${p.Name}" → ${matches[0].Name} — verify before linking`,
+            confidence:  'Low',
+          });
+        }
+      }
+    }
+    return {
+      callDate:         call.StartDateTime?.split('T')[0] ?? 'Unknown',
+      durationMins:     Math.round((call.DurationInSeconds ?? 0) / 60),
+      amName:           (call.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown AM',
+      amId:             call.OwnerId ?? '',
+      participantCount: participants.length,
+      likelyAccounts,
+    };
+  });
+
+  type TaskMatch = {
+    subject:        string;
+    date:           string;
+    type:           'meeting' | 'phone';
+    amName:         string;
+    amId:           string;
+    whoName?:       string;
+    whoEmail?:      string;
+    likelyAccount?: { accountName: string; matchedVia: string };
+  };
+
+  const taskMatchResults: TaskMatch[] = [
+    ...orphanedMeetingTasks.map(t => ({ ...t, _type: 'meeting' as const })),
+    ...orphanedPhoneTasks.map(t => ({ ...t, _type: 'phone' as const })),
+  ].map(task => {
+    const who      = task.Who as { Name?: string; Email?: string } | undefined;
+    const whoEmail = who?.Email;
+    const whoName  = who?.Name;
+    let likelyAccount: TaskMatch['likelyAccount'];
+    if (whoEmail) {
+      const c = emailToZoomContact.get(whoEmail.toLowerCase().trim());
+      if (c) {
+        likelyAccount = {
+          accountName: (c.Account as { Name?: string } | undefined)?.Name ?? 'Unknown',
+          matchedVia:  `WhoId: ${whoEmail} → ${c.Name}`,
+        };
+      }
+    }
+    return {
+      subject:  task.Subject ?? 'Zoom Activity',
+      date:     task.ActivityDate ?? 'Unknown',
+      type:     task._type,
+      amName:   (task.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown AM',
+      amId:     task.OwnerId ?? '',
+      whoName,
+      whoEmail,
+      likelyAccount,
+    };
+  });
+
   // ── Step 4: Write back to Salesforce (unless dry run) ────────────────────
 
   const tierDrops   = results.filter(r => r.dropped);
@@ -255,7 +480,7 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
         writeErrors.push(`Score write failed for ${result.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
 
-      // Create Task for AM when tier drops
+      // Create Task for AM when tier drops — one per account
       if (result.dropped) {
         try {
           const taskSubject = `⚠️ Prophet Alert: ${result.name} dropped to ${result.newTier}`;
@@ -289,6 +514,82 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
         } catch (err) {
           writeErrors.push(`Task create failed for ${result.name}: ${err instanceof Error ? err.message : String(err)}`);
         }
+      }
+    }
+
+    // ── Create one Task per AM for all their orphaned Zoom calls ─────────────
+    // Group all orphaned activity by AM user ID
+    type OrphanGroup = {
+      amName: string;
+      calls:  CallMatch[];
+      tasks:  TaskMatch[];
+    };
+    const orphanByAm = new Map<string, OrphanGroup>();
+
+    for (const r of callMatchResults) {
+      if (!r.amId) continue;
+      if (!orphanByAm.has(r.amId)) orphanByAm.set(r.amId, { amName: r.amName, calls: [], tasks: [] });
+      orphanByAm.get(r.amId)!.calls.push(r);
+    }
+    for (const r of taskMatchResults) {
+      if (!r.amId) continue;
+      if (!orphanByAm.has(r.amId)) orphanByAm.set(r.amId, { amName: r.amName, calls: [], tasks: [] });
+      orphanByAm.get(r.amId)!.tasks.push(r);
+    }
+
+    for (const [amId, group] of orphanByAm) {
+      const totalCount = group.calls.length + group.tasks.length;
+      const taskSubject = `🔗 Prophet: ${totalCount} Zoom call${totalCount > 1 ? 's' : ''} not linked to any account — action required`;
+
+      const descLines: string[] = [
+        `Prophet Nightly Scan — ${today}`,
+        ``,
+        `${group.amName}, you have ${totalCount} Zoom recording${totalCount > 1 ? 's' : ''} in Salesforce that are not linked to any account.`,
+        `Unlinked calls are invisible to health scoring. These accounts may appear disengaged when they are not.`,
+        `Please open each call in Salesforce and link it to the correct account.`,
+        ``,
+      ];
+
+      if (group.calls.length > 0) {
+        descLines.push(`VIDEO CALLS (${group.calls.length}):`);
+        for (const c of group.calls) {
+          const match = c.likelyAccounts[0];
+          const suggestion = match
+            ? `Likely account: ${match.accountName} (${match.confidence} confidence)`
+            : `No account match found — manual review needed`;
+          descLines.push(`  • ${c.callDate} | ${c.durationMins}m | ${suggestion}`);
+        }
+        descLines.push(``);
+      }
+
+      if (group.tasks.length > 0) {
+        descLines.push(`ZOOM TASKS (${group.tasks.length}):`);
+        for (const t of group.tasks) {
+          const icon = t.type === 'meeting' ? 'Meeting' : 'Phone Call';
+          const match = t.likelyAccount
+            ? `Likely account: ${t.likelyAccount.accountName}`
+            : t.whoName
+              ? `Contact on file: ${t.whoName} — link to their account`
+              : `No contact or account — manual review needed`;
+          descLines.push(`  • ${t.date} | ${icon}: ${t.subject} | ${match}`);
+        }
+        descLines.push(``);
+      }
+
+      descLines.push(`To link a call: Open the VideoCall or Task in Salesforce → Edit → set the Account field.`);
+
+      try {
+        await salesforceService.createRecord('Task', {
+          Subject:      taskSubject,
+          Description:  descLines.join('\n'),
+          OwnerId:      amId,
+          Status:       'Not Started',
+          Priority:     'High',
+          ActivityDate: today,
+        });
+        tasksCreated++;
+      } catch (err) {
+        writeErrors.push(`Orphan Task create failed for ${group.amName}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }
@@ -333,6 +634,31 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
     lines.push('');
   }
 
+  // ── Onboarding Gap Detection (accounts since Feb 1 with no onboarding record) ──
+
+  interface OnboardingGapAccount {
+    Id: string;
+    Name: string;
+    Status__c?: string;
+    CreatedDate: string;
+    OwnerId?: string;
+    Owner?: { Name: string };
+    Account_Manager_Lookup__r?: { Name: string };
+    Total_Monthly_Recurring_Amount__c?: number;
+  }
+
+  const onboardingGapAccounts = await salesforceService.rawQuery<OnboardingGapAccount>(
+    `SELECT Id, Name, Status__c, CreatedDate, OwnerId, Owner.Name,
+            Account_Manager_Lookup__r.Name, Total_Monthly_Recurring_Amount__c
+     FROM Account
+     WHERE CreatedDate >= 2026-02-01T00:00:00Z
+       AND ${ACTIVE_CLIENT_FILTER}
+       AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
+       AND Id NOT IN (SELECT Account__c FROM Client_Onboarding__c WHERE Account__c != null)
+     ORDER BY CreatedDate DESC
+     LIMIT 50`
+  ).catch(() => [] as OnboardingGapAccount[]);
+
   // Critical accounts
   if (criticalNow.length > 0) {
     lines.push(`## 🔴 Critical Accounts (${criticalNow.length})`);
@@ -343,6 +669,82 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
         lines.push(`  Risk: ${r.riskFactors.join(', ')}`);
       }
     }
+    lines.push('');
+  }
+
+  // Onboarding Gap Report
+  if (onboardingGapAccounts.length > 0) {
+    lines.push(`## 📋 Missing Onboarding Records — Active Clients Since Feb 1, 2026 (${onboardingGapAccounts.length})`);
+    lines.push('*Every new client since Feb 1 must have a Client Onboarding record. These do not.*');
+    lines.push('');
+    for (const acct of onboardingGapAccounts) {
+      const amName = (acct.Account_Manager_Lookup__r as { Name?: string } | undefined)?.Name
+        ?? (acct.Owner as { Name?: string } | undefined)?.Name
+        ?? 'Unknown AM';
+      const mrr = acct.Total_Monthly_Recurring_Amount__c
+        ? ` | $${acct.Total_Monthly_Recurring_Amount__c.toLocaleString()}/mo`
+        : '';
+      const created = acct.CreatedDate.split('T')[0];
+      lines.push(`- **${acct.Name}** | Created: ${created} | Status: ${acct.Status__c ?? 'Unknown'} | AM: ${amName}${mrr}`);
+    }
+    lines.push('');
+  } else {
+    lines.push(`## ✅ Onboarding Records — All Clear`);
+    lines.push(`All active clients created since Feb 1, 2026 have an onboarding record.`);
+    lines.push('');
+  }
+
+  // ── Orphaned Zoom Activity Output ─────────────────────────────────────────
+  const totalOrphaned       = orphanedVideoCalls.length + orphanedMeetingTasks.length + orphanedPhoneTasks.length;
+  const highConfMatches     = callMatchResults.filter(r => r.likelyAccounts.some(a => a.confidence === 'High')).length;
+  const lowConfMatches      = callMatchResults.filter(r => r.likelyAccounts.length > 0 && r.likelyAccounts.every(a => a.confidence === 'Low')).length;
+  const unmatchedCalls      = callMatchResults.filter(r => r.likelyAccounts.length === 0).length;
+  const matchedTasks        = taskMatchResults.filter(t => t.likelyAccount).length;
+  const unmatchedTasks      = taskMatchResults.filter(t => !t.likelyAccount).length;
+
+  if (totalOrphaned > 0) {
+    lines.push(`## 🔗 Orphaned Zoom Activity — Unlinked to Accounts (${totalOrphaned})`);
+    lines.push('*These Zoom recordings exist in Salesforce but have no account attached. Prophet cannot score or surface them.*');
+    lines.push(`*${highConfMatches} high-confidence matches found via email | ${lowConfMatches} low-confidence (name only) | ${unmatchedCalls + unmatchedTasks} unresolved*`);
+    lines.push('');
+
+    if (callMatchResults.length > 0) {
+      lines.push(`### 📹 Video Calls — No Account Linked (${callMatchResults.length})`);
+      for (const r of callMatchResults) {
+        lines.push(`**${r.callDate}** | ${r.durationMins}m | ${r.participantCount} participant(s) | AM: ${r.amName}`);
+        if (r.likelyAccounts.length > 0) {
+          for (const a of r.likelyAccounts) {
+            const icon = a.confidence === 'High' ? '✅' : '⚠️';
+            lines.push(`  ${icon} **Likely: ${a.accountName}** — matched via ${a.matchedVia}`);
+          }
+        } else {
+          lines.push(`  ❓ No match found — no participant emails on file in Salesforce`);
+        }
+      }
+      lines.push('');
+    }
+
+    if (taskMatchResults.length > 0) {
+      lines.push(`### 📞 Zoom Tasks — No Account Linked (${taskMatchResults.length})`);
+      for (const r of taskMatchResults) {
+        const icon = r.type === 'meeting' ? '🎥' : '📞';
+        lines.push(`${icon} **${r.date}** — ${r.subject} | AM: ${r.amName}`);
+        if (r.likelyAccount) {
+          lines.push(`  ✅ **Likely: ${r.likelyAccount.accountName}** — ${r.likelyAccount.matchedVia}`);
+        } else if (r.whoName || r.whoEmail) {
+          lines.push(`  ❓ Contact on record: ${r.whoName ?? ''}${r.whoEmail ? ` (${r.whoEmail})` : ''} — no Salesforce account match`);
+        } else {
+          lines.push(`  ❓ No contact or account linked — AM must resolve manually`);
+        }
+      }
+      lines.push('');
+    }
+
+    lines.push('**Why this matters:** Every unlinked call is invisible to health scoring. An account that looks silent may actually have active engagement — it just isn\'t credited. AMs must link calls or Prophet will misclassify these accounts as disengaged.');
+    lines.push('');
+  } else {
+    lines.push(`## ✅ Zoom Linkage — All Clear`);
+    lines.push(`All Zoom calls from the last 30 days are linked to Salesforce accounts.`);
     lines.push('');
   }
 
@@ -385,6 +787,18 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
       oldTier: r.oldTier ?? 'Unknown',
       newTier: r.newTier,
       amName:  r.amName,
+    })),
+    onboardingGap: onboardingGapAccounts.length,
+    orphanedZoomCalls: totalOrphaned,
+    orphanedCallsMatched: highConfMatches + matchedTasks,
+    orphanedCallsUnresolved: unmatchedCalls + unmatchedTasks,
+    onboardingGapAccounts: onboardingGapAccounts.map(a => ({
+      name:    a.Name,
+      created: a.CreatedDate.split('T')[0],
+      status:  a.Status__c ?? 'Unknown',
+      amName:  (a.Account_Manager_Lookup__r as { Name?: string } | undefined)?.Name
+            ?? (a.Owner as { Name?: string } | undefined)?.Name
+            ?? 'Unknown',
     })),
   };
 

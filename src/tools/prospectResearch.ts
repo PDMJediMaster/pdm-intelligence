@@ -102,6 +102,10 @@ export const prospectResearchTools: Tool[] = [
           type: 'string',
           description: 'State (2-letter code preferred, e.g., "TX", "CA")',
         },
+        zip: {
+          type: 'string',
+          description: 'ZIP code of the practice — more precise than city/state for market radius analysis',
+        },
         websiteUrl: {
           type: 'string',
           description: 'Practice website URL',
@@ -251,6 +255,7 @@ const ProspectResearchArgs = z.object({
   practiceName: z.string().optional(),
   city:         z.string().optional(),
   state:        z.string().optional(),
+  zip:          z.string().optional(),
   websiteUrl:   z.string().optional(),
   leadId:       z.string().optional(),
   accountId:    z.string().optional(),
@@ -331,11 +336,51 @@ function buildPracticeNameFilter(rawName: string): string {
 // ─── Tool 1 Handler: sf_research_prospect ────────────────────────────────────
 
 async function handleProspectResearch(rawArgs: unknown): Promise<string> {
-  const { practiceName, city, state, websiteUrl, leadId, accountId } =
+  const { practiceName, city, state, zip, websiteUrl, leadId, accountId } =
     ProspectResearchArgs.parse(rawArgs ?? {});
 
   if (!practiceName && !websiteUrl && !leadId && !accountId) {
     return '❌ Please provide at least a practice name, website URL, or Salesforce record ID.';
+  }
+
+  // ── ZIP → City/State + DMA lookup ────────────────────────────────────────
+  let resolvedCity  = city;
+  let resolvedState = state;
+  let dmaName: string | null = null;
+  let dmaCode: string | null = null;
+
+  if (zip) {
+    const [dmaResults] = await Promise.all([
+      salesforceService.rawQuery<{ Id: string; Name: string; DMA_Code__c?: string; Zip_Code__c?: string }>(
+        `SELECT Id, Name, DMA_Code__c, Zip_Code__c
+         FROM DMA_Markets__c
+         WHERE Zip_Code__c = '${zip.trim()}'
+         LIMIT 1`
+      ).catch(() => [] as { Id: string; Name: string; DMA_Code__c?: string; Zip_Code__c?: string }[]),
+    ]);
+
+    if (dmaResults.length > 0) {
+      dmaName = dmaResults[0].Name;
+      dmaCode = dmaResults[0].DMA_Code__c ?? null;
+    }
+
+    // Derive city/state from zip if not already provided
+    if (!resolvedCity || !resolvedState) {
+      try {
+        const resp = await fetch(`https://api.zippopotam.us/us/${zip.trim()}`);
+        if (resp.ok) {
+          const data = await resp.json() as {
+            places?: Array<{ 'place name': string; 'state abbreviation': string }>;
+          };
+          if (data.places?.[0]) {
+            resolvedCity  = resolvedCity  ?? data.places[0]['place name'];
+            resolvedState = resolvedState ?? data.places[0]['state abbreviation'];
+          }
+        }
+      } catch {
+        // zip lookup failed — proceed with whatever city/state we have
+      }
+    }
   }
 
   // ── Salesforce Pre-Check ──────────────────────────────────────────────────
@@ -405,10 +450,12 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
   // ── Build Output ──────────────────────────────────────────────────────────
 
   const lines: string[] = [];
-  const locationStr = [city, state].filter(Boolean).join(', ');
+  const locationStr = [resolvedCity, resolvedState].filter(Boolean).join(', ');
+  const geoAnchor   = zip ? `ZIP ${zip}` : locationStr;
 
   lines.push(`# 🔍 PDM Prospect Research: ${practiceName ?? websiteUrl ?? 'Unknown Practice'}`);
-  if (locationStr) lines.push(`**Location:** ${locationStr}`);
+  if (locationStr) lines.push(`**Location:** ${locationStr}${zip ? ` (ZIP: ${zip})` : ''}`);
+  if (dmaName)     lines.push(`**DMA Market:** ${dmaName}${dmaCode ? ` (Code: ${dmaCode})` : ''}`);
   if (websiteUrl)  lines.push(`**Website:** ${websiteUrl}`);
   lines.push(`**Date:** ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`);
   lines.push('');
@@ -442,40 +489,187 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
   lines.push('');
   lines.push(`## 🔎 Research Instructions`);
   lines.push('');
-  lines.push(`Please run a comprehensive PDM Sales Market Research analysis on this practice now using web search. Cover the following in order:`);
+  lines.push(`You are PDM's senior market intelligence analyst. Run a full Sales Market Research analysis on this practice using web search. This report must win on TWO levels simultaneously: (1) the business case — market opportunity, competitive gaps, tactical urgency; and (2) the implant-belief case — patient psychology, authority, safety narrative, trust architecture. A report that only does one of these is incomplete.`);
   lines.push('');
-  lines.push(`**Practice to research:** ${practiceName ?? 'Identify from website'}`);
-  lines.push(`**Location:** ${locationStr || 'Determine from website'}`);
+  lines.push(`**Practice:** ${practiceName ?? 'Identify from website'}`);
+  lines.push(`**Location:** ${locationStr || 'Determine from website'}${zip ? ` | ZIP: ${zip}` : ''}`);
+  if (dmaName) lines.push(`**DMA Market:** ${dmaName} (Code: ${dmaCode ?? 'N/A'}) — use ZIP ${zip} as the geographic anchor for all competitive analysis. The DMA is market context only, NOT the research boundary.`);
   lines.push(`**Website:** ${websiteUrl ?? 'Search for it'}`);
   lines.push('');
+  lines.push(`**CRITICAL — Geographic Scope:** All competitive and market analysis is scoped to a 10–20 mile radius from ${geoAnchor}. Never expand to full DMA or metro. Local competition is what the patient chooses from.`);
+  lines.push('');
   lines.push(`**Search for:**`);
-  lines.push(`- Their website, Google Maps listing, and Google reviews`);
-  lines.push(`- SEO presence: search "dental implants ${locationStr}" and "All-on-4 ${locationStr}"`);
-  lines.push(`- Competitor practices targeting implant/full-arch cases in the area`);
-  lines.push(`- Social media presence and any ads running`);
-  lines.push(`- Patient reviews and reputation signals`);
+  lines.push(`- Practice website, Google Maps listing, Google reviews, social media`);
+  lines.push(`- SEO: search "dental implants ${locationStr || geoAnchor}", "All-on-4 ${locationStr || geoAnchor}", "full arch ${locationStr || geoAnchor}", "same day teeth ${locationStr || geoAnchor}"`);
+  lines.push(`- Competitor authority content: doctor videos, before/after galleries, patient testimonials, CBCT/guided surgery mentions`);
+  lines.push(`- How competitors frame safety, trust, and implant candidacy — what language do they use?`);
+  lines.push(`- Patient FAQs on competitor websites (pain, recovery, cost, candidacy)`);
+  lines.push(`- 55+ demographics in the local market — retirement communities, migration patterns, "new to [city]" population`);
+  lines.push(`- Any ads running (Google Ads, Facebook/Meta)`);
   lines.push('');
-  lines.push(`**Produce the complete research report covering:**`);
-  lines.push(`1. Practice Overview`);
-  lines.push(`2. Market Snapshot (10-30 mile radius: population 45+, median income, affluent ZIPs)`);
-  lines.push(`3. Competitive Landscape (who dominates local implant/full-arch, easiest to disrupt, most pressure)`);
-  lines.push(`4. Practice Marketing Evaluation (website, mobile, branding, doctor authority, before/after, financing CTA)`);
-  lines.push(`5. SEO Gap Analysis (implant/full-arch/All-on-4 pages, keyword gaps, Maps relevance)`);
-  lines.push(`6. Google Ads Opportunity`);
-  lines.push(`7. Reputation Analysis (rating, review count, sentiment, velocity vs competitors)`);
-  lines.push(`8. Google Maps & Local Visibility`);
-  lines.push(`9. Opportunity Gaps`);
-  lines.push(`10. Market Domination Strategy`);
-  lines.push(`11. Strategic Recommendations (3-5 specific, evidence-based)`);
-  lines.push(`12. Sales Enablement Summary:`);
-  lines.push(`    - Executive Summary for the Rep (2-3 sentences, call-ready)`);
-  lines.push(`    - Talking Points (7-10)`);
-  lines.push(`    - Discovery Questions (5-8)`);
-  lines.push(`    - Likely Objections and Responses (3-5)`);
-  lines.push(`    - Positioning Statement`);
-  lines.push(`    - Recommended Next Step`);
+  lines.push(`---`);
   lines.push('');
-  lines.push(`**ACCURACY RULES:** Never fabricate data. Label estimates as [Estimated]. Tie every recommendation to observed gaps or market data.`);
+  lines.push(`**PRODUCE THE COMPLETE RESEARCH REPORT IN THIS EXACT ORDER:**`);
+  lines.push('');
+  lines.push(`### 1. Practice Overview`);
+  lines.push(`Practice name, website, location, doctor name(s), specialty focus, years in practice, facility impressions. Note any unique differentiators: boutique vs. chain feel, bilingual staff, technology mentioned, financing offered.`);
+  lines.push('');
+  lines.push(`### 2. Market Snapshot`);
+  lines.push(`10–20 mile radius from ${geoAnchor}. Cover:`);
+  lines.push(`- Population 45+ (the core implant-age demographic)`);
+  lines.push(`- Median household income and affluent ZIP codes within radius`);
+  lines.push(`- Retirement communities, 55+ developments, assisted living clusters nearby`);
+  lines.push(`- Migration patterns: is this a "new to [city]" market? Snowbirds? Relocating retirees?`);
+  lines.push(`- Estimated full-arch/implant case volume potential [Estimated]`);
+  lines.push(`- Revenue opportunity: at avg $25K–$45K per full-arch case, what does capturing 2–4 additional cases/month represent?`);
+  lines.push(dmaName ? `- DMA context: ${dmaName} — relevant for media buying, but local radius drives actual patient decisions` : '');
+  lines.push('');
+  lines.push(`### 3. Patient Psychology & Trust Architecture`);
+  lines.push(`This section is mandatory. Full-arch implant cases are emotionally loaded decisions — not just high-ticket purchases. Address:`);
+  lines.push(`- **The fearful patient:** What anxieties does a typical implant candidate in this market carry? Fear of surgery, fear of pain, fear of commitment, embarrassment about their current teeth, age-related identity concerns.`);
+  lines.push(`- **The trust decision:** Why does a patient choose one implant doctor over another? Safety perception ("this doctor knows what they're doing"), visible authority ("I've seen their work"), financial confidence ("I can actually afford this and understand the terms"), and social proof ("people like me did this and it worked").`);
+  lines.push(`- **The 55+ narrative:** How does a 65-year-old think about full-arch? Eating with grandchildren, confidence at social events, not wanting removable dentures, longevity of investment, wanting to feel younger. Speak to this identity shift, not just the procedure.`);
+  lines.push(`- **Recovery anxiety:** What questions hold patients back? "How long until I can eat normally? Will I have teeth during healing? What does the first week actually look like?" These are the FAQ gaps that stall case acceptance.`);
+  lines.push(`- **Financial confidence vs. sticker shock:** "I can't afford $30K" is often really "I don't believe I can have this." How does this practice (and should this practice) address monthly payment framing, insurance limitations, and the cost-of-doing-nothing argument?`);
+  lines.push('');
+  lines.push(`### 4. Clinical Authority Assessment`);
+  lines.push(`Evaluate how well the practice communicates clinical credibility — in plain English, not jargon. Check:`);
+  lines.push(`- **Guided surgery:** Do they mention CBCT, 3D planning, surgical guides, or treatment planning precision? This is a major safety signal for patients. "We plan your surgery in 3D before we touch you" is powerful.`);
+  lines.push(`- **All-on-X/Full-Arch workflow:** Do they explain the process? Same-day teeth vs. staged approach? What is their case pathway? Patients who understand the process are far more likely to proceed.`);
+  lines.push(`- **Bone grafting & candidacy:** Do they address who IS and ISN'T a candidate? Do they mention bone grafting as a solution for patients who were told they "don't have enough bone"? This expands the addressable market.`);
+  lines.push(`- **Materials:** Do they mention titanium vs. zirconia? Screw-retained vs. cement? Immediate load? These are trust signals for educated implant researchers.`);
+  lines.push(`- **Sedation & comfort:** Is IV sedation, oral sedation, or sleep dentistry mentioned? Fear of pain is a top barrier. Practices that address sedation convert more fearful patients.`);
+  lines.push(`- **Doctor credentials:** Implant training, surgical volume, board certifications, continuing education. Is the doctor positioned as a specialist or a generalist who does implants?`);
+  lines.push('');
+  lines.push(`### 5. Competitive Landscape`);
+  lines.push(`Identify 3–5 competitor practices within 15 miles of ${geoAnchor} targeting implant/full-arch cases. For each:`);
+  lines.push(`- Name, website, Google review count and rating`);
+  lines.push(`- Who dominates local implant search rankings`);
+  lines.push(`- Who is running Google Ads or Facebook Ads`);
+  lines.push(`- Who owns the Maps Pack (top 3 Google Maps positions)`);
+  lines.push(`- Who has the strongest authority content (video, before/after, testimonials)`);
+  lines.push(`- Who is easiest to disrupt and why`);
+  lines.push(`- What narrative are they owning? ("trusted implant center," "same-day smiles," "affordable full-arch") — and what narrative is unclaimed?`);
+  lines.push(`- Are any competitors corporate chains? If so, "boutique without the chain feel" is a positioning opportunity.`);
+  lines.push('');
+  lines.push(`### 6. Practice Marketing Evaluation`);
+  lines.push(`Score the practice across these dimensions (Strong / Weak / Missing):`);
+  lines.push(`- Website: mobile speed, implant-specific landing pages, All-on-X page, before/after gallery, patient stories, doctor bio with authority signals`);
+  lines.push(`- Trust architecture: Does the site answer "why choose this doctor?" convincingly? Does it reduce fear? Does it build financial confidence?`);
+  lines.push(`- Doctor authority: Video presence, photo professionalism, credentials displayed, "meet the doctor" page quality`);
+  lines.push(`- Proof assets: Before/after photos (quantity and quality), patient video testimonials (fear→transformation→lifestyle arc), written reviews on site`);
+  lines.push(`- Candidacy and FAQ content: Is there a page answering "Am I a candidate?" and "What does the process look like?" and "How much does it cost?"`);
+  lines.push(`- Financing: Is flexible payment clearly communicated? Monthly payment examples? Third-party financing (CareCredit, Sunbit, etc.)?`);
+  lines.push(`- Call-to-action: Is there a specific implant consultation CTA? "Same-day consult" or "free consultation" framing?`);
+  lines.push('');
+  lines.push(`### 7. SEO Gap Analysis`);
+  lines.push(`- Do they rank for "dental implants ${locationStr || geoAnchor}"? "All-on-4 ${locationStr || geoAnchor}"? "full arch ${locationStr || geoAnchor}"? "same day teeth ${locationStr || geoAnchor}"?`);
+  lines.push(`- Do they have dedicated landing pages for each service? Or does one generic implant page try to cover everything?`);
+  lines.push(`- Are there FAQ pages targeting "how much do implants cost," "am I a candidate," "how long does recovery take"? These are high-converting long-tail terms.`);
+  lines.push(`- Google Maps presence: Are they in the local 3-pack for implant searches? How many reviews vs. top competitor?`);
+  lines.push(`- Content gaps: What implant topics do competitors rank for that this practice doesn't address?`);
+  lines.push('');
+  lines.push(`### 8. Google Ads Opportunity`);
+  lines.push(`- Are competitors running Google Ads for implant/full-arch terms? Who?`);
+  lines.push(`- Is this practice running ads? Effectively?`);
+  lines.push(`- Estimated cost-per-click and competition level for target keywords [Estimated]`);
+  lines.push(`- What is the ROI math? (1 additional full-arch case = $25K–$45K revenue vs. estimated monthly ad spend)`);
+  lines.push('');
+  lines.push(`### 9. Reputation & Proof Architecture`);
+  lines.push(`Go beyond review counts. Evaluate proof as a conversion system:`);
+  lines.push(`- Google review count and star rating vs. top 3 competitors`);
+  lines.push(`- Review velocity: are they gaining reviews steadily or stagnant?`);
+  lines.push(`- Review sentiment: do patients specifically mention implants, full-arch, or doctor trust? Or are reviews generic?`);
+  lines.push(`- Before/after photos: Do they exist? Quantity? Quality? Are they on Google Maps, the website, and social?`);
+  lines.push(`- Patient video testimonials: Do they follow the fear→transformation→lifestyle narrative arc? (Before: "I was embarrassed to smile." During: "The team made me feel safe." After: "I can eat anything. I feel like myself again.")`);
+  lines.push(`- Doctor-led authority video: Does the doctor appear on camera explaining the process, building trust, and reducing fear? This is the single highest-converting trust asset for implant cases.`);
+  lines.push(`- What proof does the competitor leader have that this practice lacks?`);
+  lines.push('');
+  lines.push(`### 10. Google Maps & Local Visibility`);
+  lines.push(`- Maps Pack position for "dental implants ${locationStr || geoAnchor}" and "All-on-4 ${locationStr || geoAnchor}"`);
+  lines.push(`- Google Business Profile completeness: photos, services listed, Q&A, posts`);
+  lines.push(`- Citation consistency across directories`);
+  lines.push('');
+  lines.push(`### 11. Trust Signal Assessment`);
+  lines.push(`Evaluate how well the practice earns patient trust — not just lists credentials:`);
+  lines.push(`- **Safety narrative:** Does the practice communicate that the procedure is safe and predictable? CBCT planning, surgical guides, sedation options, experience volume all build this.`);
+  lines.push(`- **Authority positioning:** Is the doctor positioned as THE implant expert in the local market, or just a dentist who offers implants?`);
+  lines.push(`- **Life-changing framing:** Is the outcome framed as life-changing? ("You'll eat what you want. You'll smile without thinking about it. You'll feel like yourself again.") Or is it clinical and transactional?`);
+  lines.push(`- **Long-term value:** Is the permanence and durability of implants communicated? "This is a 20-year decision, not a one-time purchase" is a powerful reframe of cost objections.`);
+  lines.push(`- **Social proof architecture:** Certifications, associations, success rates, case volume claims, recognizable training programs.`);
+  lines.push('');
+  lines.push(`### 12. Local Differentiation & Positioning Opportunities`);
+  lines.push(`Identify what makes or could make this practice uniquely positioned in this specific market:`);
+  lines.push(`- **Boutique vs. chain:** If competitors are corporate DSOs, "personal relationship, not a number" is a strong positioning angle. "Affordable full-arch without the chain feel" is a specific hook.`);
+  lines.push(`- **Bilingual capability:** If the local market has a significant Spanish-speaking population and the practice serves them, this is a major competitive wedge.`);
+  lines.push(`- **New-to-market angle:** If this is a retirement/migration market, "Welcome to [City] — your trusted implant home" is a specific patient acquisition hook.`);
+  lines.push(`- **Community ties:** Local associations, sponsorships, schools, churches, civic groups that competitors haven't captured.`);
+  lines.push(`- **Technology differentiation:** CBCT, digital scanning, same-day CEREC, Yomi robotic surgery — any technology that signals precision and safety.`);
+  lines.push('');
+  lines.push(`### 13. Opportunity Gaps`);
+  lines.push(`What specific gaps exist that PDM can close? List 5–8 concrete gaps with the business impact of closing each. Example format: "GAP: No before/after gallery. IMPACT: Patients researching implants need visual proof before calling. Competitors with galleries convert 2–3x more implant consultations from organic traffic."`);
+  lines.push('');
+  lines.push(`### 14. Market Domination Strategy`);
+  lines.push(`The path to owning the local implant market — not just improving visibility. Answer:`);
+  lines.push(`- What narrative should this practice own? (The one that's currently unclaimed by competitors)`);
+  lines.push(`- What is the single fastest path to 2–3 additional full-arch cases per month?`);
+  lines.push(`- What is the biggest competitor weakness to exploit?`);
+  lines.push(`- What is the 90-day build sequence? (Month 1: Foundation & Visibility → Month 2: Safety, Proof & Case Acceptance Assets → Month 3: Authority Compounding & Lead Acceleration)`);
+  lines.push(`- What does this practice look like at 12 months if they execute?`);
+  lines.push('');
+  lines.push(`### 15. Strategic Recommendations`);
+  lines.push(`5–7 specific recommendations. Each must include: WHAT to do, WHY it works (tied to observed gap or market data), and the IMPACT (revenue, cases, authority).`);
+  lines.push(`Balance tactical execution (SEO, ads, reviews) with trust architecture (authority video, proof sequencing, clinical authority content). Both are required.`);
+  lines.push('');
+  lines.push(`### 16. Sales Enablement Summary`);
+  lines.push('');
+  lines.push(`**A. Executive Summary (2–3 sentences, call-ready)**`);
+  lines.push(`The paragraph a rep reads 10 minutes before the call. Should communicate: where the practice is today, the single biggest opportunity, and why now.`);
+  lines.push('');
+  lines.push(`**B. Why Full-Arch Patients Choose One Doctor Over Another**`);
+  lines.push(`Written as a coaching brief for the rep. Cover the four trust drivers specific to this market: safety perception, visible authority, financial confidence, and social proof. Tie each to something observable about this practice or its competitors.`);
+  lines.push('');
+  lines.push(`**C. Patient Psychology Scripts**`);
+  lines.push(`3–5 ready-to-use statements the rep can share with the doctor to help them communicate with fearful patients:`);
+  lines.push(`- How to address surgery fear in the first consultation`);
+  lines.push(`- How to frame recovery expectations honestly and reassuringly`);
+  lines.push(`- How to reframe cost as investment in 20 years of function (not a $30K purchase)`);
+  lines.push(`- How to address "I need to think about it" (the most common full-arch stall)`);
+  lines.push('');
+  lines.push(`**D. Clinical Authority Talking Points (Rep-Facing)**`);
+  lines.push(`How the rep explains PDM's ability to build clinical authority for this practice. Plain English, no jargon:`);
+  lines.push(`- "We build content that explains guided surgery in terms a patient can trust"`);
+  lines.push(`- "We create a candidacy page that converts patients who were told they don't qualify"`);
+  lines.push(`- "We produce the doctor video that makes patients feel safe before they ever call"`);
+  lines.push('');
+  lines.push(`**E. Positioning Statement**`);
+  lines.push(`One sentence that positions this practice against its specific local competition. Should be specific enough that it couldn't apply to any other market.`);
+  lines.push('');
+  lines.push(`**F. Local Differentiation Hook**`);
+  lines.push(`The single sharpest local angle available — boutique vs. chain, bilingual, new-to-market, technology leadership, community trust. One sentence, conversation-ready.`);
+  lines.push('');
+  lines.push(`**G. Patient FAQ (The Questions That Stall Case Acceptance)**`);
+  lines.push(`5 questions with recommended answers for each:`);
+  lines.push(`1. "Am I a candidate if I have bone loss?"`);
+  lines.push(`2. "How long is the recovery? Will I have teeth during healing?"`);
+  lines.push(`3. "Why does it cost so much?"`);
+  lines.push(`4. "How is this different from dentures?"`);
+  lines.push(`5. "What if something goes wrong?"`);
+  lines.push('');
+  lines.push(`**H. Discovery Questions (5–8)**`);
+  lines.push(`Questions the rep asks to uncover need, urgency, and buying signals.`);
+  lines.push('');
+  lines.push(`**I. Likely Objections and Responses (3–5)**`);
+  lines.push(`The real objections — not generic sales objections. Tied to what this specific market and practice profile typically surfaces.`);
+  lines.push('');
+  lines.push(`**J. Recommended Next Step**`);
+  lines.push(`One specific action the rep takes at the end of the discovery call.`);
+  lines.push('');
+  lines.push(`---`);
+  lines.push('');
+  lines.push(`**ACCURACY RULES:** Never fabricate data. Label all estimates as [Estimated]. Tie every recommendation to an observed gap, competitor behavior, or market signal. Do not claim PDM works with the practice without public evidence. If data is unavailable, state it clearly.`);
+  lines.push('');
+  lines.push(`**TONE:** This is not a marketing audit. It is an implant growth strategy built around trust, outcomes, and long-term patient transformation. Write it that way.`);
   lines.push('');
   lines.push(`---`);
   lines.push('');
@@ -483,8 +677,8 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
   lines.push('');
   lines.push(`When research is complete, call **sf_save_research_scores** with:`);
   lines.push(`- \`practiceName\`: "${practiceName ?? ''}"`);
-  lines.push(`- \`city\`: "${city ?? ''}"`);
-  lines.push(`- \`state\`: "${state ?? ''}"`);
+  lines.push(`- \`city\`: "${resolvedCity ?? ''}"`);
+  lines.push(`- \`state\`: "${resolvedState ?? ''}"`);
   lines.push(`- \`websiteUrl\`: "${websiteUrl ?? ''}"`);
   if (resolvedLeadId)    lines.push(`- \`leadId\`: "${resolvedLeadId}"`);
   if (resolvedAccountId) lines.push(`- \`accountId\`: "${resolvedAccountId}"`);

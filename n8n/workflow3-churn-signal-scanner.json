@@ -1,0 +1,210 @@
+{
+  "name": "PDM Workflow 3 — Churn Signal Scanner (Nightly)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 23 * * *"
+            }
+          ]
+        }
+      },
+      "id": "wf3-node-001",
+      "name": "Nightly 11 PM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [260, 300],
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://progressivedental.my.salesforce.com/services/data/v62.0/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "sendQueryParameters": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "SELECT Id, Name, Status__c, Total_Monthly_Recurring_Amount__c, Tier__c, LastActivityDate, Contract_Renewal_Date__c, Health_Score__c, Health_Tier__c, Cancellation_or_Pause_Request_Date__c, Delinquent__c, Flagged_Status__c, OwnerId, Owner.Name FROM Account WHERE Status__c IN ('Active', 'Renewal', 'Non Renewing', 'Reinstated', 'Delinquent', 'Paused', 'Pending') AND OwnerId != '005PU000001eUQDYA2' AND (Cancellation_or_Pause_Request_Date__c != null OR Delinquent__c = true OR Flagged_Status__c = true OR Health_Tier__c IN ('Critical', 'At Risk')) ORDER BY Total_Monthly_Recurring_Amount__c DESC NULLS LAST LIMIT 50"
+            }
+          ]
+        }
+      },
+      "id": "wf3-node-002",
+      "name": "Query Churn Signal Accounts",
+      "type": "n8n-nodes-base.httpRequest",
+      "credentials": {
+        "salesforceOAuth2Api": { "id": "2", "name": "Salesforce account 2" }
+      },
+      "position": [500, 300],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://progressivedental.my.salesforce.com/services/data/v62.0/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "sendQueryParameters": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "SELECT Id, Name, Status__c, Refund_Amount__c, Reason__c, CreatedDate, Account__c, Account__r.Name, Account__r.Owner.Name FROM Refund_Request__c WHERE Status__c != 'Closed' ORDER BY CreatedDate DESC LIMIT 25"
+            }
+          ]
+        }
+      },
+      "id": "wf3-node-003",
+      "name": "Query Open Refund Requests",
+      "type": "n8n-nodes-base.httpRequest",
+      "credentials": {
+        "salesforceOAuth2Api": { "id": "2", "name": "Salesforce account 2" }
+      },
+      "position": [740, 300],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pull data from both upstream nodes\nconst accountsWrapper = $('Query Churn Signal Accounts').first().json;\nconst accounts = accountsWrapper.records || [];\n\nconst refundsWrapper = $input.first().json;\nconst refunds = refundsWrapper.records || [];\n\nconst today = new Date().toLocaleDateString('en-US', {\n  weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'\n});\n\n// Deduplicate accounts by Id\nconst accountMap = new Map();\nfor (const a of accounts) {\n  if (!accountMap.has(a.Id)) accountMap.set(a.Id, a);\n}\nconst uniqueAccounts = Array.from(accountMap.values());\n\n// Group by severity\nconst withCancelRequest = uniqueAccounts.filter(a => a.Cancellation_or_Pause_Request_Date__c);\nconst critical = uniqueAccounts.filter(a => a.Health_Tier__c === 'Critical' && !a.Cancellation_or_Pause_Request_Date__c);\nconst atRisk   = uniqueAccounts.filter(a => a.Health_Tier__c === 'At Risk'   && !a.Cancellation_or_Pause_Request_Date__c);\nconst delinquent = uniqueAccounts.filter(a => a.Delinquent__c && a.Health_Tier__c !== 'Critical' && !a.Cancellation_or_Pause_Request_Date__c);\nconst flaggedOnly = uniqueAccounts.filter(a => a.Flagged_Status__c && !a.Delinquent__c && !a.Cancellation_or_Pause_Request_Date__c && a.Health_Tier__c !== 'Critical' && a.Health_Tier__c !== 'At Risk');\n\n// MRR at risk\nconst totalMrr = uniqueAccounts.reduce((sum, a) => sum + (a.Total_Monthly_Recurring_Amount__c || 0), 0);\n\nconst lines = [];\nlines.push(`🚨 *Prophet Nightly Churn Scan — ${today}*`);\nlines.push(`*${uniqueAccounts.length} account${uniqueAccounts.length !== 1 ? 's' : ''} flagged | ${refunds.length} open refund request${refunds.length !== 1 ? 's' : ''} | Total MRR at risk: $${totalMrr.toLocaleString()}*`);\nlines.push('');\n\n// ── Open Refund Requests (Priority Override) ──────────────────────────────\nif (refunds.length > 0) {\n  lines.push(`⚠️ *Open Refund Requests — Priority Override (${refunds.length})*`);\n  for (const r of refunds.slice(0, 6)) {\n    const acctName = (r.Account__r && r.Account__r.Name) ? r.Account__r.Name : r.Account__c || 'Unknown';\n    const ownerName = (r.Account__r && r.Account__r.Owner && r.Account__r.Owner.Name) ? r.Account__r.Owner.Name : '';\n    const amt = r.Refund_Amount__c ? ` — $${Number(r.Refund_Amount__c).toLocaleString()}` : '';\n    const owner = ownerName ? ` | AM: ${ownerName}` : '';\n    const reason = r.Reason__c ? ` | \"${r.Reason__c.slice(0, 60)}\"` : '';\n    lines.push(`  • *${acctName}*${amt}${owner}${reason}`);\n  }\n  if (refunds.length > 6) lines.push(`  • _...and ${refunds.length - 6} more refund requests_`);\n  lines.push('');\n}\n\n// ── Cancellation / Pause Requests ────────────────────────────────────────\nif (withCancelRequest.length > 0) {\n  lines.push(`🛑 *Cancellation or Pause Request on File (${withCancelRequest.length})*`);\n  for (const a of withCancelRequest.slice(0, 6)) {\n    const mrr = a.Total_Monthly_Recurring_Amount__c ? `$${Number(a.Total_Monthly_Recurring_Amount__c).toLocaleString()}/mo` : 'MRR ?';\n    const score = a.Health_Score__c != null ? ` | Score: ${a.Health_Score__c}/100` : '';\n    const ownerName = (a.Owner && a.Owner.Name) ? a.Owner.Name : 'Unknown';\n    const date = a.Cancellation_or_Pause_Request_Date__c || 'date unknown';\n    lines.push(`  • *${a.Name}* | ${mrr}${score} | Requested: ${date} | AM: ${ownerName}`);\n  }\n  lines.push('');\n}\n\n// ── Critical Health Tier ─────────────────────────────────────────────────\nif (critical.length > 0) {\n  lines.push(`🔴 *Critical Health Score (${critical.length})*`);\n  for (const a of critical.slice(0, 6)) {\n    const mrr = a.Total_Monthly_Recurring_Amount__c ? `$${Number(a.Total_Monthly_Recurring_Amount__c).toLocaleString()}/mo` : 'MRR ?';\n    const score = a.Health_Score__c != null ? ` | Score: ${a.Health_Score__c}/100` : '';\n    const delinqFlag = a.Delinquent__c ? ' | 💳 Delinquent' : '';\n    const ownerName = (a.Owner && a.Owner.Name) ? a.Owner.Name : 'Unknown';\n    lines.push(`  • *${a.Name}* | ${mrr}${score}${delinqFlag} | AM: ${ownerName}`);\n  }\n  lines.push('');\n}\n\n// ── At Risk Health Tier ──────────────────────────────────────────────────\nif (atRisk.length > 0) {\n  lines.push(`🟡 *At Risk — Watch Closely (${atRisk.length})*`);\n  for (const a of atRisk.slice(0, 8)) {\n    const mrr = a.Total_Monthly_Recurring_Amount__c ? `$${Number(a.Total_Monthly_Recurring_Amount__c).toLocaleString()}/mo` : 'MRR ?';\n    const score = a.Health_Score__c != null ? ` | Score: ${a.Health_Score__c}/100` : '';\n    const ownerName = (a.Owner && a.Owner.Name) ? a.Owner.Name : 'Unknown';\n    lines.push(`  • *${a.Name}* | ${mrr}${score} | AM: ${ownerName}`);\n  }\n  lines.push('');\n}\n\n// ── Delinquent Only ───────────────────────────────────────────────────────\nif (delinquent.length > 0) {\n  lines.push(`💳 *Delinquent (not yet Critical) (${delinquent.length})*`);\n  for (const a of delinquent.slice(0, 5)) {\n    const mrr = a.Total_Monthly_Recurring_Amount__c ? `$${Number(a.Total_Monthly_Recurring_Amount__c).toLocaleString()}/mo` : 'MRR ?';\n    const ownerName = (a.Owner && a.Owner.Name) ? a.Owner.Name : 'Unknown';\n    lines.push(`  • *${a.Name}* | ${mrr} | AM: ${ownerName}`);\n  }\n  lines.push('');\n}\n\n// ── Flagged Only ─────────────────────────────────────────────────────────\nif (flaggedOnly.length > 0) {\n  lines.push(`🚩 *Flagged for Attention (${flaggedOnly.length})*`);\n  for (const a of flaggedOnly.slice(0, 5)) {\n    const mrr = a.Total_Monthly_Recurring_Amount__c ? `$${Number(a.Total_Monthly_Recurring_Amount__c).toLocaleString()}/mo` : 'MRR ?';\n    const ownerName = (a.Owner && a.Owner.Name) ? a.Owner.Name : 'Unknown';\n    lines.push(`  • *${a.Name}* | ${mrr} | AM: ${ownerName}`);\n  }\n  lines.push('');\n}\n\nlines.push(`_Run *sf_get_churn_risk_accounts* in Prophet for full ranked list_`);\nlines.push(`_Run *sf_get_pre_call_brief [account name]* for competitive gap analysis + do-nothing projection_`);\n\nconst alertCount = uniqueAccounts.length + refunds.length;\nreturn [{ json: { message: lines.join('\\n'), alertCount } }];"
+      },
+      "id": "wf3-node-004",
+      "name": "Build Churn Digest",
+      "type": "n8n-nodes-base.code",
+      "position": [980, 300],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "wf3-cond-001",
+              "leftValue": "={{ $json.alertCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "wf3-node-005",
+      "name": "Has Churn Signals?",
+      "type": "n8n-nodes-base.if",
+      "position": [1220, 300],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "REPLACE_WITH_GOOGLE_CHAT_WEBHOOK_URL",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{ $json.message }}"
+            }
+          ]
+        }
+      },
+      "id": "wf3-node-006",
+      "name": "Post Churn Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1460, 180],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "REPLACE_WITH_GOOGLE_CHAT_WEBHOOK_URL",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "✅ *Prophet Nightly Churn Scan — {{ new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) }}*\n\nAll clear. No churn signals detected tonight.\nNo cancellation requests, no delinquent accounts, no critical or at-risk health tiers, no open refund requests.\n\n_Prophet will scan again tomorrow at 11 PM._"
+            }
+          ]
+        }
+      },
+      "id": "wf3-node-007",
+      "name": "Post All Clear",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1460, 420],
+      "typeVersion": 4.2
+    }
+  ],
+  "connections": {
+    "Nightly 11 PM": {
+      "main": [
+        [
+          { "node": "Query Churn Signal Accounts", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Query Churn Signal Accounts": {
+      "main": [
+        [
+          { "node": "Query Open Refund Requests", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Query Open Refund Requests": {
+      "main": [
+        [
+          { "node": "Build Churn Digest", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build Churn Digest": {
+      "main": [
+        [
+          { "node": "Has Churn Signals?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Has Churn Signals?": {
+      "main": [
+        [
+          { "node": "Post Churn Alert", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Post All Clear", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

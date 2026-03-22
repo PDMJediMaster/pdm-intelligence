@@ -6,7 +6,7 @@
 **Owner:** William Summers — Salesforce Admin & Systems Architect, Progressive Dental Marketing
 **Project Path:** `/Users/williamsummers/salesforce-retention-mcp`
 **Last Updated:** March 2026
-**Status:** Active build — 13 tools live
+**Status:** Active build — 18 tools compiled | Workflows 5, 9, 10 live | Call_Intelligence__c built | Workflow 11 (CI Processing) next
 
 ---
 
@@ -123,6 +123,7 @@ API name remains `Case`. In user-facing output, always call them "Tickets."
 ### 5. Status__c Picklist Values (Marketing Status — confirmed from org)
 Active/operational values (include in queries): `Active`, `Renewal`, `Non Renewing`, `Reinstated`, `Delinquent`, `Paused`, `Pending`
 Terminal values (exclude from operational queries): `Cancelled`, `Inactive`, `Expired`
+**Null Status__c = TCI Event ticket buyer or converted Lead that never became a client.** These accounts exist because Salesforce creates an Account record when a Lead converts, or when a TCI Event ticket is sold. They are NOT marketing clients. Always add `AND Status__c != null` to any query that is intended to return active clients. Never score, report on, or include null-status accounts in operational health scans, churn risk, or weekly synopses.
 
 ### 6. Sales Orders
 Multiple Sales Orders per Account = proposals, not separate deals. Filter to Signed/Active status only.
@@ -132,6 +133,61 @@ Before designing anything new, search the architecture library first. Do not dup
 
 ### 8. Field API Names Are Law
 Always use confirmed field API names from the field maps or the CSV export. Never guess at field names.
+
+---
+
+## PDM Product Line Structure — Critical Context
+
+PDM sells across four distinct product lines. Understanding these is essential for correct account classification, revenue analysis, and filtering.
+
+### Phase 1 — One-Time / Non-Recurring Services
+Foundation services. Sold once. No ongoing monthly commitment.
+- Website Development & Publish
+- Video Production
+- Graphic Design
+- Traditional Media: TV, Radio, Newspaper, Billboards, Direct Mail
+
+### Phase 2 — Recurring Marketing Services (Core Client Revenue)
+Monthly recurring. This is the primary MRR-generating product line. Clients on Phase 2 are the "active clients" Prophet is designed to retain.
+- PPC (Pay-Per-Click / Google Ads)
+- Social Media Marketing
+- SEO (Search Engine Optimization)
+
+### TCI Events — Conference Ticket Sales (NOT Client Commitments)
+The Closing Institute hosts 3 major conferences per year. Ticket purchasers are **prospects and leads, not necessarily clients.** They can be existing clients but do not have to be. An Opportunity with Phase = "TCI Events" represents a ticket sale, not a marketing engagement.
+
+**2026 Conference Schedule:**
+- **Las Vegas Bootcamp** — March 27–28, 2026 (Opportunity name pattern: FABC26 Vegas)
+- **Dallas Bootcamp** — Late July 2026
+- **Full Arch Growth Conference (FAGC)** — Early November 2026, Orlando (annual flagship event)
+
+**FAGC History:**
+- 2024: Tom Brady, Mark Wahlberg, Ray Lewis, Andrew Bustamante (no musical guest)
+- 2025: Tony Robbins, Andrew Bustamante; Masquerade Ball on Saturday with 50 Cent
+
+**Salesforce signal:** `Opportunity.Phase__c = 'TCI Events'` or Opportunity name contains "FABC" or "FAGC". Account `Status__c` is typically `null` for pure ticket buyers.
+
+**Revenue note:** TCI Events + sponsorships represent major revenue. Sponsors pay significant fees for visibility at these events. Track separately from Phase 2 MRR.
+
+### TCI Mentorship — Recurring Training Program
+The Closing Institute (https://www.theclosinginstitute.com/) trains dental practice staff on converting leads into patients. This is a recurring monthly program. Members are often (but not always) also Phase 2 marketing clients.
+- Tracked via `TCI_Status__c` and `TCI_Enrolled__c` on Account
+- Separate from marketing services — a client can have TCI Mentorship without Phase 2 or vice versa
+
+### Pricebook Alignment
+Each product line has its own Salesforce Pricebook:
+- Pricebook 1: Phase 1 (one-time)
+- Pricebook 2: Phase 2 (recurring marketing)
+- Pricebook 3: TCI Events (ticket sales)
+- Pricebook 4: TCI Mentorship (recurring training)
+
+### Filtering Rules by Product Line
+| Use Case | Filter |
+|---|---|
+| Active marketing clients (Phase 2) | `Status__c IN ('Active','Renewal','Non Renewing','Reinstated','Delinquent','Paused','Pending')` AND `Status__c != null` |
+| TCI Event accounts only | `Status__c = null` AND has Opp with Phase = 'TCI Events' |
+| All operational accounts | `Status__c != null` AND `Status__c NOT IN ('Cancelled','Inactive','Expired')` |
+| TCI Mentorship members | `TCI_Enrolled__c = true` OR `TCI_Status__c != null` |
 
 ---
 
@@ -155,6 +211,33 @@ Always use confirmed field API names from the field maps or the CSV export. Neve
 - `Sales_Order__c` — active service contracts
 - `TCI_Training_Progress__c` — TCI program tracking
 - `TCI_Events__c` — The Closing Institute events
+- `Call_Intelligence__c` — ✅ CREATED 3/21/2026 — Per-call AI analysis library. Every VideoCall processed by Workflow 11 gets a record here. Fields:
+  - `VideoCall__c` — Lookup(Video Call) — links to the source call
+  - `Account__c` — Lookup(Account) — links to the client account
+  - `Call_Date__c` — Date/Time
+  - `Call_Duration_Seconds__c` — Number(8,0)
+  - `Is_Recorded__c` — Checkbox
+  - `Language__c` — Text(10)
+  - `Vendor__c` — Text(50) — e.g., ZOOM
+  - `Processing_Status__c` — Picklist: Pending / Processing / Processed / Error
+  - `Sentiment_Label__c` — Picklist: Positive / Neutral / Negative / Mixed
+  - `Sentiment_Score__c` — Number(5,0), range -100 to +100
+  - `Tone_Shift__c` — Picklist: Improved / Stable / Declined / N/A
+  - `SF_Intelligence_Score__c` — Number(8,0), Salesforce CI-generated score
+  - `Key_Topics__c` — Long Text Area(1000)
+  - `Commitments_Made__c` — Long Text Area(5000)
+  - `Risk_Signals__c` — Long Text Area(3000)
+  - `Competitor_Mentions__c` — Long Text Area(1000)
+  - `AI_Summary__c` — Long Text Area(10000) — Claude's synthesis
+  - `Doctor_Reached__c` — Checkbox
+  - `Satisfaction_Signal__c` — Picklist: Satisfied / Neutral / Frustrated / Escalation Risk
+  - `Follow_Up_Required__c` — Checkbox
+  - `Budget_Concern__c` — Checkbox
+  - `Pause_Cancel_Language__c` — Checkbox — triggers save play in Workflow 10
+  - `Competitor_Mentioned__c` — Checkbox
+  - `Processed_Date__c` — Date/Time
+  - `Processing_Error__c` — Long Text Area(500)
+  - `Transcript_Char_Count__c` — Number(10,0)
 
 **Key Account Custom Fields:**
 - `Status__c` — Marketing Status (the core status field)
@@ -304,22 +387,54 @@ Always use confirmed field API names from the field maps or the CSV export. Neve
   - `Research_Summary__c` — Rich text snapshot of findings
   - `Primary_Gap_Type__c` — SEO / Reputation / Video / Authority / Maps (drives Gamma template selection)
   - `Baseline_Marketing_Maturity__c` — Locked at close, never changes, becomes proof-of-value benchmark
+  - `Competitive_Gap_Summary__c` — Structured gap analysis: every PDM product/phase mapped against what competitor has vs. what client has (see Competitive Intelligence Engine section)
+  - `Estimated_Monthly_Gap_Value__c` — Currency: sum of recurring PDM products that would close all identified gaps
 **n8n trigger on completion:** Research complete → n8n formats JSON → Gamma API → deck link returned to rep
 **Output format:** Matches full Sales Market Research GPT output format exactly
 
 **Plus It additions over base spec:**
-- Competitor snapshot stored as related records (re-checked weekly for delta alerts)
+- Competitor snapshot stored as related records (re-checked quarterly for delta alerts)
 - `External_Competitive_Pressure__c` field updated quarterly via scheduled n8n workflow
+- `Competitive_Gap_Summary__c` refreshed quarterly — AM always has a current gap brief, not stale research
 - Auto-generated draft prospecting email from findings (second tool call or Agentforce action)
 - Territory heat map data written to support PowerBI visualization
 - PDM benchmark comparison: "practices like this started at X and are now at Y"
+- "What If You Do Nothing" projection: competitor review velocity × 12 months = concrete urgency number
 
 ### TOOL 10: sf_get_competitive_alerts
-**Purpose:** Delta report on stored competitor snapshots for an Account or Lead
-**Queries:** Stored competitor snapshot records, checks current week vs. last snapshot
-**Signals:** Review count gain, Maps ranking change, new YouTube content, new ads activity
-**Output:** "Competitor X gained 34 reviews in 30 days — competitive pressure increasing"
-**Use cases:** Weekly AM brief, churn prevention, renewal conversations
+**Purpose:** Delta report on stored competitor snapshots for an Account or Lead — the engine that powers save plays, upsell conversations, and renewal presentations
+**Queries:** Stored competitor snapshot records, checks current period vs. last snapshot
+**Signals mapped to PDM products:**
+
+| Competitor Signal | Gap | PDM Product |
+|---|---|---|
+| YouTube channel / procedure videos / patient testimonials | Client has no video presence | Phase 1: Video Production |
+| Modern website, fresh content, implant-specific pages | Client site is dated or missing pages | Phase 1: Website Development |
+| Professional branding, polished social creative | Client brand is inconsistent | Phase 1: Graphic Design |
+| TV / radio / billboard presence detected | Client not in traditional media | Phase 1: Traditional Media |
+| Running Google Ads on implant/full-arch/All-on-4 keywords | Client not on PPC or underspending | Phase 2: PPC Add-on / Budget Increase |
+| Ranking #1-3 for implant keywords | Client buried on page 2+ | Phase 2: SEO |
+| Local landing pages for multiple ZIP codes | Client has no local pages | Phase 2: SEO Local Expansion |
+| Appearing in Maps Pack for multiple queries | Client shows up for few or none | Phase 2: SEO / Local SEO |
+| Active Facebook/Instagram/TikTok, running social ads | Client social dormant or absent | Phase 2: Social Media Marketing |
+| 300+ reviews, gaining 15+/month, strong sentiment | Client falling behind on reputation | Phase 2: SEO / Reputation |
+| Reviews mention "great consultation" / "financing explained" | Staff may not be trained on case acceptance | TCI Mentorship |
+
+**Output:**
+- Competitor activity delta since last snapshot (review gains, ranking shifts, new platforms, new ad activity)
+- Service gap table: competitor vs. client, mapped to specific PDM product
+- `Estimated_Monthly_Gap_Value__c` — revenue opportunity if all gaps closed
+- Save Play hook (for Paused/Cancellation accounts): pre-written urgency statement for AM use
+- Upsell hook (for Active accounts): "Your competitor just did X — here's how we respond"
+
+**Four conversation contexts — same data, different framing:**
+
+1. **New Prospect:** "Here's what your competitors have that you don't — and here's exactly how PDM closes those gaps." → Close the deal
+2. **Active Client (Quarterly Review):** "Your competitor gained X reviews and launched YouTube since your last review. You're ahead in SEO but the PPC gap is widening." → Upsell + reinforce value
+3. **Renewal Conversation:** "When you started, you had 47 reviews and no SEO. Today you have 312 reviews and rank #2. Meanwhile your top competitor dropped from #1 to #4." → Renew with proof + expand scope
+4. **Paused/Cancellation Save Play:** "While you've been paused, Valley Implant Center gained 89 reviews, launched Google Ads, and jumped ahead in Maps. Here's the three-move play to re-establish dominance — and it starts with getting back on schedule." → Re-activate with urgency and a new strategy vision
+
+**Use cases:** Weekly AM brief, Workflow 10 task enrichment, save play generation, renewal proof package, upsell identification
 
 ### TOOL 11: sf_get_sales_objection_patterns
 **Purpose:** Mines Conversation Insights transcripts for objection patterns by outcome
@@ -426,6 +541,39 @@ n8n is the designated automation and orchestration layer. Zero production workfl
 5. Assemble executive briefing document
 6. Email to leadership distribution list
 
+### Workflow 11: Nightly Conversation Intelligence Processing (NEXT BUILD)
+**Trigger:** Nightly 1:00 AM (after Workflow 3 churn scan at 11 PM)
+**Purpose:** Process every VideoCall record that doesn't yet have a Call_Intelligence__c record. Extract AI intelligence from each transcript and write structured signals back to Salesforce. Builds the cumulative call library that powers coaching, churn prediction, and sentiment trending.
+**Steps:**
+1. Query VideoCall records with no linked Call_Intelligence__c (Processing_Status__c != 'Processed')
+   - Filter: `StartDateTime >= LAST_N_DAYS:90` for nightly runs (no filter for historical backfill)
+   - Exclude: VideoCall records where RelatedRecordId is null
+   - Limit: 50 per run (rate limiting)
+2. For each VideoCall: fetch CITranscriptEvent transcript via Salesforce REST API
+3. POST transcript + metadata to Anthropic API (Claude claude-sonnet-4-6)
+   - System prompt: PDM call intelligence extraction instructions
+   - Extract: sentiment score/label, tone shift, key topics, commitments, risk signals, competitor mentions, doctor reached, satisfaction signal, budget concern, pause/cancel language
+   - Return: structured JSON
+4. Create Call_Intelligence__c record with all extracted fields
+5. Set Processing_Status__c = 'Processed' and Processed_Date__c = NOW
+6. If risk signals found OR Pause_Cancel_Language__c = true:
+   - Update Account.Sentiment_Trend__c
+   - If Critical signal: create Salesforce Task for AM immediately (don't wait for Workflow 10)
+7. Error handling: if transcript unavailable, set Processing_Status__c = 'Pending', Processing_Error__c = error message — retry next night
+
+**Historical Backfill (one-time run):**
+- Same workflow, remove date filter
+- Process all VideoCall records with no Call_Intelligence__c record
+- Run in batches of 50 until all historical calls are processed
+- Expected volume: potentially hundreds of calls going back years
+
+**What this enables once running:**
+- Sentiment_Trend__c on Account reflects actual call tone, not just activity dates
+- AMs see "last 3 calls: Neutral → Neutral → Frustrated" in pre-call brief
+- Workflow 10 tasks for Paused accounts include: "⚠️ Pause/cancel language detected in last call"
+- sf_get_call_intelligence returns structured AI analysis, not just raw transcript
+- 6-month dataset enables: churn pattern detection, AM coaching benchmarks, commitment tracking
+
 ---
 
 ## Agentforce Architecture — Planned
@@ -470,7 +618,9 @@ These fields are required before certain tools and workflows can function fully:
 | Priority_Level__c | Lead + Account | Picklist | Low / Moderate / High / Top Priority |
 | Research_Summary__c | Lead + Account | Long Text Area | Research snapshot from sf_research_prospect |
 | Primary_Gap_Type__c | Lead + Account | Picklist | Drives Gamma template selection |
-| Competitor_Snapshot__c | Related object | Custom Object | Stores weekly competitor data per Lead/Account |
+| Competitor_Snapshot__c | Related object | Custom Object | Stores quarterly competitor data per Lead/Account |
+| Competitive_Gap_Summary__c | Lead + Account | Long Text Area (32,000) | Structured gap analysis: all PDM products vs. competitor, written by sf_research_prospect and refreshed quarterly |
+| Estimated_Monthly_Gap_Value__c | Lead + Account | Currency | Sum of recurring PDM products that would close all identified gaps — upsell opportunity dollar value |
 | Renewal_Deck_URL__c | Account | URL | Renewal deck link written by n8n |
 
 **Flow automations to build:**
@@ -591,12 +741,152 @@ Before running web research, check Salesforce. After running research, write sco
     - Positioning Statement
     - Recommended Next Step
 
+**Competitive Gap Output — written to `Competitive_Gap_Summary__c` (required field, not optional):**
+
+For every PDM product across all four phases, audit whether the dominant competitor has it and whether the client/prospect has it. This field powers four distinct conversations — new prospect close, active client upsell, paused/cancellation save play, and renewal proof. Structure as:
+
+```
+═══ PHASE 1: FOUNDATION SERVICES (one-time) ═══
+
+Website
+  Competitor: [Modern/Dated] — implant-specific pages [YES/NO], before/after gallery [YES/NO],
+              financing CTA [YES/NO], mobile-optimized [YES/NO], fresh content [YES/NO]
+  Client: [Current state from Assets / observation]
+  Gap: YES / NO
+  PDM Product: Website Development & Publish
+
+Video
+  Competitor: YouTube channel [YES/NO] — [X videos], procedure walkthroughs [YES/NO],
+              patient testimonials [YES/NO], doctor authority content [YES/NO],
+              video embedded on site [YES/NO]
+  Client: [Current state]
+  Gap: YES / NO
+  PDM Product: Video Production
+
+Branding / Creative
+  Competitor: Consistent professional brand [YES/NO], custom graphics [YES/NO],
+              polished social creative [YES/NO], branded signage / photography [YES/NO]
+  Client: [Current state]
+  Gap: YES / NO
+  PDM Product: Graphic Design
+
+Traditional Media
+  Competitor: TV presence [YES/NO], Radio [YES/NO], Billboard [YES/NO],
+              Direct Mail [YES/NO]
+  Client: [Current state]
+  Gap: YES / NO
+  PDM Product: Traditional Media (TV / Radio / Billboard / Direct Mail)
+
+═══ PHASE 2: RECURRING MARKETING SERVICES ═══
+
+PPC / Google Ads
+  Competitor: Running ads [YES/NO] — keywords: [list], estimated spend: $X/mo
+  Client: On PPC [YES/NO] — budget: $X/mo
+  Gap: YES / NO
+  Urgency: HIGH if competitor spending aggressively and client not on PPC
+  PDM Product: PPC Add-on / PPC Budget Increase
+
+SEO — Organic Rankings
+  Competitor: Ranking #[X] for [keywords] — implant pages [YES/NO], All-on-4 page [YES/NO],
+              full-arch page [YES/NO], blog content [YES/NO]
+  Client: Ranking #[X] for [keywords]
+  Gap: YES / NO
+  PDM Product: SEO / SEO Expansion
+
+SEO — Local Landing Pages
+  Competitor: Local pages for [ZIP/city list] — [X pages total]
+  Client: Single location page [YES/NO], local pages [YES/NO — X pages]
+  Gap: YES / NO
+  PDM Product: SEO Local Expansion
+
+SEO — Google Maps / Local Pack
+  Competitor: Maps Pack for [X queries] — ranked #[X]
+  Client: Maps Pack for [Y queries] — ranked #[Y]
+  Gap: YES / NO
+  PDM Product: SEO / Local SEO
+
+Reputation / Reviews
+  Competitor: [X] reviews, [Y.Y] stars, gaining [Z]/month — sentiment: [themes]
+  Client: [X] reviews, [Y.Y] stars, gaining [Z]/month
+  Gap: YES (falling behind) / NO (competitive or ahead)
+  Trend: Widening / Stable / Closing
+  PDM Product: SEO / Reputation Strategy
+
+Social Media
+  Competitor: Active on [platforms] — posting [X/week], running social ads [YES/NO],
+              before/after content [YES/NO], doctor reels [YES/NO], TikTok [YES/NO],
+              engagement rate [high/low]
+  Client: Active on [platforms] — [current posting frequency]
+  Gap: YES / NO
+  PDM Product: Social Media Marketing
+
+═══ TCI EVENTS ═══
+
+Event Attendance / Market Presence
+  Competitor: Doctor has attended TCI events [YES/NO — inferred from network signals]
+  Client: TCI Events attended [X] — last event: [name/date]
+  Note: TCI Events are PDM-hosted — competitor attendance is indirect intelligence only
+  PDM Product: TCI Events (ticket sale / sponsorship opportunity)
+
+═══ TCI MENTORSHIP ═══
+
+Staff Training / Case Acceptance
+  Competitor: Reviews mention "great consultation", "financing explained clearly",
+              "staff was knowledgeable" [YES/NO — signal from review sentiment]
+  Client: TCI enrolled [YES/NO] — TCI Status: [value]
+  Gap: Signal present / No signal
+  PDM Product: TCI Mentorship
+
+═══ COMPOSITE ═══
+Total Gaps Identified: X (Phase 1: X | Phase 2: X | TCI: X)
+Estimated One-Time Opportunity: $X,XXX (Phase 1 services client is missing)
+Estimated Monthly Recurring Opportunity: $X,XXX/mo (Phase 2 + TCI Mentorship gaps)
+Total Estimated Monthly Gap Value: $X,XXX/mo recurring + $X,XXX one-time
+Highest Urgency Gap: [Product] — [one-line reason why this one first]
+Recommended First Conversation: [Product] — [why this drives the most immediate impact]
+
+Save Play Hook (Paused / Cancellation accounts):
+  [Pre-written urgency statement grounded in specific competitor gains since pause date.
+   Format: "While you've been paused, [Competitor] has [specific action]. Meanwhile,
+   your [metric] has [changed]. Here's the three-move play to re-establish dominance —
+   and it starts with [specific PDM product]."]
+
+Upsell Hook (Active accounts — quarterly review):
+  [Pre-written talking point for AM use. Format: "Your competitor just [specific action].
+   You're ahead in [area] but the [gap] is widening. Here's how we respond."]
+
+Renewal Hook (Renewal conversation):
+  [Evidence-based renewal statement. Format: "When you started, [baseline].
+   Today, [current state]. Meanwhile, [top competitor] has [shifted].
+   Here's Phase [X] of the strategy."]
+```
+
+**The four conversations, one data source — one engine, four revenue outcomes:**
+
+The same `Competitive_Gap_Summary__c` field powers four distinct revenue conversations. Frame based on account status:
+
+- **Buy (new prospect):** "Here's what your competitors have that you don't — and here's exactly how PDM closes those gaps." → Close the deal. Every gap maps to a specific PDM product. Every hook cites a specific observed competitor action.
+
+- **Resume (Paused/Save Play):** "While you've been paused, [Competitor] has [specific action]. Your [metric] has [changed]. Here's the three-move play to re-establish dominance — and it starts with [specific PDM product]." → Re-activate with urgency and a brand new strategy vision. This is the most emotionally powerful conversation: "While you were on the sideline, this happened." Workflow 10 task descriptions for Paused accounts must include this hook pulled from Competitive_Gap_Summary__c.
+
+- **Upsell (active client — quarterly review):** "Your competitor just [specific action]. You're ahead in [area] but the [gap] is widening. Here's how we respond." → Grow the account with evidence, not pressure. Every PDM product not yet purchased that the competitor has = an upsell line item with dollar value.
+
+- **Renew:** "When you started, [baseline from Baseline_Marketing_Maturity__c]. Today, [current state]. Meanwhile, [top competitor] has [shifted]. Here's Phase [X] of the strategy." → Renew with proof of results and expand scope. The gap delta (what's closed vs. what's new) is the renewal narrative.
+
+**Estimated_Monthly_Gap_Value__c — the upsell dollar engine:**
+Sum ONLY recurring Phase 2 + TCI Mentorship gaps (not one-time Phase 1). This number is the "revenue opportunity if all gaps closed with PDM." It appears in:
+- sf_get_upsell_opportunities (Tool 7) — makes every upsell conversation evidence-based
+- Workflow 10 Paused account tasks — "your competitor has $X/mo in services you don't"
+- The renewal proof package — shows what's still on the table
+- Executive dashboard — total upsell opportunity across the book of business
+
 **Accuracy rules (enforce strictly):**
-- Never fabricate missing data
+- Never fabricate missing data — if a signal cannot be confirmed, state clearly
 - Clearly label assumptions and estimates
 - Do not claim Progressive Dental works with the practice without public evidence
-- If data unavailable, state clearly it cannot be confirmed
-- Tie every recommendation to observed gaps, competitor behavior, or market opportunity
+- Tie every gap to a specific PDM product — no gaps without a solution
+- Every hook (Save Play, Upsell, Renewal) must cite a specific observed competitor action, not a generic statement
+- `Estimated_Monthly_Gap_Value__c` must be populated — sum only recurring Phase 2 + TCI Mentorship gaps (not one-time Phase 1)
 
 ---
 
@@ -604,15 +894,24 @@ Before running web research, check Salesforce. After running research, write sco
 
 Every action on this platform contributes to a proprietary dataset that becomes more valuable and more unreplicable over time:
 
-1. **sf_research_prospect** runs on a new lead → Marketing Maturity Score written to Salesforce
-2. **Lead converts to client** → Baseline_Marketing_Maturity__c locked forever (proof-of-value benchmark)
-3. **Client receives services** → Health scores tracked monthly, call intelligence captured
-4. **Quarterly competitive re-research** → External_Competitive_Pressure__c updated
-5. **At renewal** → sf_get_renewal_proof_package assembles the delta: "You were at 34, you're now at 71. Here are 3 competitors you've passed."
-6. **After close/churn** → Data enters the benchmark dataset
-7. **Next prospect** → sf_get_benchmark_comparison: "Practices like yours who worked with us averaged 28% more implant consults at month 9"
+1. **sf_research_prospect** runs on a new lead → Marketing Maturity Score + full Competitive Gap Summary written to Salesforce
+2. **Lead converts to client** → Baseline_Marketing_Maturity__c locked forever (proof-of-value benchmark). Competitive Gap Summary becomes the upsell roadmap for the first year.
+3. **Client receives services** → Health scores tracked monthly, call intelligence captured. As PDM closes gaps, `Competitive_Gap_Summary__c` is refreshed — gaps close, new ones surface.
+4. **Quarterly competitive re-research** → Competitor data refreshed. `Competitive_Gap_Summary__c` and `Estimated_Monthly_Gap_Value__c` updated. AM gets a "what changed this quarter" brief.
+5. **Client goes Paused or flags cancellation** → Workflow 10 triggers. Save Play hook pulled from `Competitive_Gap_Summary__c`. AM walks into the re-activation call with concrete competitive ammunition: "While you were paused, this happened in your market — here's the three-move response."
+6. **At renewal** → sf_get_renewal_proof_package assembles the delta: "You were at 34 maturity, now at 71. Here are 3 competitors you've passed. Here are 2 new gaps that opened. Here's Phase 2 of the strategy."
+7. **After close/churn** → Data enters the benchmark dataset
+8. **Next prospect in same market** → sf_get_benchmark_comparison + existing competitor data already on file from prior research: "We already know your market — here's what the top 3 competitors are doing right now."
 
-**This is the moat.** No competitor, no agency, no AI tool outside PDM will ever have this dataset. It is built entirely as a byproduct of doing the job.
+**The competitive gap compounds the flywheel.** The same research that closes a new sale becomes the upsell roadmap, then the retention tool, then the save play, then the renewal proof. Every conversation is grounded in data no competitor can replicate. That is the moat.
+
+**The four conversations, one engine — one competitive intelligence database, four revenue outcomes:**
+- **Buy (new prospect):** Competitive gap shows what they're missing vs. competitors → close the deal
+- **Resume (Paused/Save Play):** Competitive gap shows what moved in their market while they were paused → re-activate with urgency and a brand new strategy vision. This is the most emotionally powerful conversation: "While you were on the sideline, this happened."
+- **Upsell (active client quarterly review):** Competitive gap shows what services to add, mapped to exact PDM products → grow the account with evidence, not pressure
+- **Renew:** Competitive gap delta shows how far they've come (baseline vs. today) and what new gaps have opened → renew with proof of results and expand scope into Phase 2 or 3 services
+
+The same data that closes the sale becomes the retention engine. Every client conversation is grounded in live competitive intelligence no competitor can replicate. That is the moat.
 
 ---
 

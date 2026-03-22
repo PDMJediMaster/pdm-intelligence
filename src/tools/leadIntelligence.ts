@@ -85,7 +85,7 @@ interface SFCompetitorSnapshot {
   Running_Google_Ads__c?: boolean;
   Maps_Pack_Position__c?: number;
   Competitive_Pressure_Score__c?: number;
-  Primary_Services__c?: string;
+  Primary_Services_Marketed__c?: string;
   Snapshot_Date__c?: string;
   Is_Primary_Competitor__c?: boolean;
 }
@@ -258,7 +258,7 @@ async function handleLeadIntelligence(rawArgs: unknown): Promise<string> {
       `SELECT Id, Competitor_Name__c, Competitor_Website__c,
               Google_Review_Count__c, Google_Star_Rating__c,
               Running_Google_Ads__c, Maps_Pack_Position__c,
-              Competitive_Pressure_Score__c, Primary_Services__c,
+              Competitive_Pressure_Score__c, Primary_Services_Marketed__c,
               Snapshot_Date__c, Is_Primary_Competitor__c
        FROM Competitor_Snapshot__c
        WHERE Lead__c = '${resolvedLeadId}'
@@ -367,7 +367,7 @@ async function handleLeadIntelligence(rawArgs: unknown): Promise<string> {
         lines.push(`  Maps Pack: Position #${snap.Maps_Pack_Position__c}`);
       if (snap.Competitive_Pressure_Score__c != null)
         lines.push(`  Pressure: ${pressureEmoji(snap.Competitive_Pressure_Score__c)} ${snap.Competitive_Pressure_Score__c}/100`);
-      if (snap.Primary_Services__c) lines.push(`  Services: ${snap.Primary_Services__c}`);
+      if (snap.Primary_Services_Marketed__c) lines.push(`  Services: ${snap.Primary_Services_Marketed__c}`);
     }
     lines.push('');
   }

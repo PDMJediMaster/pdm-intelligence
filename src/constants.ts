@@ -94,9 +94,7 @@ export const SF_FIELDS = {
   SOCIAL_SPECIALIST: 'Social_Specialist__c',
   SEO_REP:           'SEO_Rep__c',
   MANAGEMENT_FEE:    'Management_Fee__c',
-  CONTRACT_START:    'Contract_Start_Date__c',
   CONTRACT_END:      'Contract_End_Date__c',
-  LAST_CALL:         'Last_Call__c',
 } as const;
 
 // ─── Role Names (matches AccountBoardViewController) ─────────────────────

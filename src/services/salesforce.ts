@@ -54,7 +54,7 @@ class SalesforceService {
       );
     }
 
-    const conn = new jsforce.Connection({ loginUrl });
+    const conn = new jsforce.Connection({ loginUrl, version: '61.0' });
 
     this.connectingPromise = conn
       .login(username, password + token)
@@ -100,8 +100,8 @@ class SalesforceService {
              Status__c, TCI_Status__c,
              TCI_Trainer__r.Name, PPC_Specialist__r.Name,
              Social_Specialist__r.Name, SEO_Rep__r.Name,
-             Management_Fee__c, Contract_Start_Date__c, Contract_End_Date__c,
-             Last_Call__c, LastActivityDate
+             Management_Fee__c, Contract_End_Date__c,
+             LastActivityDate
       FROM Account
       WHERE Id = '${accountId}'
       LIMIT 1

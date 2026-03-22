@@ -1,0 +1,173 @@
+{
+  "name": "PDM Workflow 2 — Weekly Competitive Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [1],
+              "triggerAtHour": 6,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "wf2-node-001",
+      "name": "Every Monday 6:00 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [260, 300],
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "operation": "query",
+        "query": "SELECT Id, Name, Competitor_Name__c, Competitor_Website__c, Google_Review_Count__c, Previous_Review_Count__c, Review_Delta__c, Google_Star_Rating__c, Running_Google_Ads__c, Running_Facebook_Ads__c, Maps_Pack_Position__c, Competitive_Pressure_Score__c, Is_Primary_Competitor__c, Snapshot_Date__c, Account__c, Lead__c FROM Competitor_Snapshot__c WHERE (Review_Delta__c >= 5 OR Running_Google_Ads__c = true OR Competitive_Pressure_Score__c >= 50) AND Snapshot_Date__c >= LAST_N_DAYS:30 ORDER BY Competitive_Pressure_Score__c DESC NULLS LAST LIMIT 50"
+      },
+      "id": "wf2-node-002",
+      "name": "Query Alert Snapshots",
+      "type": "n8n-nodes-base.salesforce",
+      "position": [480, 300],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "wf2-cond-001",
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "wf2-node-003",
+      "name": "Has Alerts?",
+      "type": "n8n-nodes-base.if",
+      "position": [700, 300],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "const snapshots = $input.all().map(item => item.json);\nconst today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });\n\nconst lines = [];\nlines.push(`⚔️ *Weekly Competitive Monitor — ${today}*`);\nlines.push(`*${snapshots.length} active competitive alert${snapshots.length !== 1 ? 's' : ''} detected*`);\nlines.push('');\n\nfor (const snap of snapshots) {\n  const competitor = snap.Competitor_Name__c || snap.Name || 'Unknown Competitor';\n  const related = snap.Account__c\n    ? `Client Account ID: ${snap.Account__c}`\n    : snap.Lead__c\n    ? `Prospect Lead ID: ${snap.Lead__c}`\n    : 'Unknown record';\n\n  const signals = [];\n  const delta = snap.Review_Delta__c || 0;\n  if (delta >= 5) {\n    signals.push(`📈 +${delta} reviews since last snapshot (now ${snap.Google_Review_Count__c || '?'} | ${snap.Google_Star_Rating__c || '?'}⭐)`);\n  }\n  if (snap.Running_Google_Ads__c) signals.push(`💰 Running Google Ads`);\n  if (snap.Running_Facebook_Ads__c) signals.push(`📱 Running Facebook Ads`);\n  const mapsPos = snap.Maps_Pack_Position__c;\n  if (mapsPos != null && mapsPos >= 1 && mapsPos <= 3) {\n    signals.push(`📍 In Google Maps Pack — position ${mapsPos}`);\n  }\n  const pressure = snap.Competitive_Pressure_Score__c || 0;\n  if (pressure >= 75) signals.push(`⚠️ High pressure score: ${pressure}/100`);\n  else if (pressure >= 50) signals.push(`🟡 Moderate pressure score: ${pressure}/100`);\n\n  const snapshotDate = snap.Snapshot_Date__c\n    ? new Date(snap.Snapshot_Date__c).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })\n    : 'Unknown';\n\n  lines.push(`*${competitor}*  |  Snapshot: ${snapshotDate}`);\n  lines.push(related);\n  if (signals.length > 0) {\n    signals.forEach(s => lines.push(`  • ${s}`));\n  } else {\n    lines.push(`  • No specific signal flags — included by pressure score threshold`);\n  }\n  lines.push('');\n}\n\nlines.push(`_Run *sf_get_competitive_alerts* in Prophet for full detail_`);\nlines.push(`_Phase 2: Live re-check via SerpAPI coming soon_`);\n\nreturn [{ json: { message: lines.join('\\n'), alertCount: snapshots.length } }];"
+      },
+      "id": "wf2-node-004",
+      "name": "Build Alert Digest",
+      "type": "n8n-nodes-base.code",
+      "position": [920, 180],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.GOOGLE_CHAT_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={\n  \"text\": {{ JSON.stringify($json.message) }}\n}"
+      },
+      "id": "wf2-node-005",
+      "name": "Post Alerts to Google Chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1140, 180],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.GOOGLE_CHAT_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={\n  \"text\": \"⚔️ *Weekly Competitive Monitor — {{ new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) }}*\\n\\n✅ All clear — no competitive alerts above thresholds this week.\\nAll monitored competitors are below review velocity, ads, and pressure score thresholds.\"\n}"
+      },
+      "id": "wf2-node-006",
+      "name": "Post All Clear",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [920, 420],
+      "typeVersion": 4.2
+    }
+  ],
+  "connections": {
+    "Every Monday 6:00 AM": {
+      "main": [
+        [
+          {
+            "node": "Query Alert Snapshots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Alert Snapshots": {
+      "main": [
+        [
+          {
+            "node": "Has Alerts?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Alerts?": {
+      "main": [
+        [
+          {
+            "node": "Build Alert Digest",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post All Clear",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Alert Digest": {
+      "main": [
+        [
+          {
+            "node": "Post Alerts to Google Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

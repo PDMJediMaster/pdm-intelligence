@@ -16,6 +16,16 @@ import type { SalesforceRefundRequest, SalesforceChangeOrder } from '../types.js
 export const INACTIVE_STATUS_VALUES = ['Cancelled', 'Inactive', 'Expired'] as const;
 const INACTIVE_STATUS_SOQL = INACTIVE_STATUS_VALUES.map((s) => `'${s}'`).join(', ');
 
+/**
+ * Standard WHERE fragment for any query that should return active marketing clients only.
+ * Excludes: terminal statuses (Cancelled/Inactive/Expired) AND null status (TCI ticket buyers /
+ * converted leads that never became clients). Always combine with OwnerId != WILLIAM_SUMMERS.
+ *
+ * Usage: `WHERE ${ACTIVE_CLIENT_FILTER} AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'`
+ */
+export const ACTIVE_CLIENT_FILTER =
+  `Status__c NOT IN (${INACTIVE_STATUS_SOQL}) AND Status__c != null`;
+
 // ─── Tool Definitions ─────────────────────────────────────────────────────
 
 export const healthReportTools: Tool[] = [
@@ -256,7 +266,7 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
               Cancellation_or_Pause_Request_Date__c,
               Next_Alignment_Call__c
        FROM Account
-       WHERE Status__c NOT IN (${INACTIVE_STATUS_SOQL})
+       WHERE ${ACTIVE_CLIENT_FILTER}
          AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
          ${ownerFilter}
          AND IsDeleted = false

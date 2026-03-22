@@ -33,7 +33,7 @@ interface CompetitorSnapshot {
   Maps_Pack_Position__c?: number;
   Running_Google_Ads__c?: boolean;
   Running_Facebook_Ads__c?: boolean;
-  Primary_Services__c?: string;
+  Primary_Services_Marketed__c?: string;
   Competitive_Pressure_Score__c?: number;
   Is_Primary_Competitor__c?: boolean;
   Alert_Triggered__c?: boolean;
@@ -197,7 +197,7 @@ async function handleCompetitiveAlerts(rawArgs: unknown): Promise<string> {
             Google_Review_Count__c, Google_Star_Rating__c,
             Previous_Review_Count__c, Review_Delta__c,
             Maps_Pack_Position__c, Running_Google_Ads__c, Running_Facebook_Ads__c,
-            Primary_Services__c, Competitive_Pressure_Score__c,
+            Primary_Services_Marketed__c, Competitive_Pressure_Score__c,
             Is_Primary_Competitor__c, Alert_Triggered__c, Research_Notes__c,
             Account__c, Account__r.Name, Account__r.Owner.Name,
             Lead__c, Lead__r.Name, Lead__r.Company, Lead__r.Owner.Name
@@ -287,8 +287,8 @@ async function handleCompetitiveAlerts(rawArgs: unknown): Promise<string> {
       if (snap.Competitive_Pressure_Score__c != null) {
         lines.push(`**Pressure Score:** ${snap.Competitive_Pressure_Score__c}/100`);
       }
-      if (snap.Primary_Services__c) {
-        lines.push(`**Services Marketed:** ${snap.Primary_Services__c}`);
+      if (snap.Primary_Services_Marketed__c) {
+        lines.push(`**Services Marketed:** ${snap.Primary_Services_Marketed__c}`);
       }
       if (snap.Research_Notes__c) {
         lines.push(`**Notes:** ${snap.Research_Notes__c}`);

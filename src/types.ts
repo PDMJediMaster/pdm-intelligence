@@ -33,11 +33,9 @@ export interface SalesforceAccount {
   SEO_Budget__c?: number;
   Social_Budget__c?: number;
   // Contract
-  Contract_Start_Date__c?: string;
   Contract_End_Date__c?: string;       // Formula pointing to Contract_Renewal_Date__c — keep
   Contract_Renewal_Date__c?: string;   // Authoritative renewal date
   // Engagement & health signals
-  Last_Call__c?: string;
   LastActivityDate?: string;
   Next_Alignment_Call__c?: string;
   AM_Spoke_to_Doctor__c?: string;      // Date of last doctor contact

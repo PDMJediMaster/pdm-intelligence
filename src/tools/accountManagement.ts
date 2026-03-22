@@ -6,12 +6,18 @@ import {
   detectProducts,
   generateTalkingPoints,
 } from '../services/healthScoring.js';
-import { PDM_PRODUCT_LIST } from '../constants.js';
+import { PDM_PRODUCT_LIST, PRODUCT_KEYWORDS } from '../constants.js';
 import type {
   SalesforceAsset,
   SalesforceBusinessObjective,
   SalesforceRefundRequest,
 } from '../types.js';
+import {
+  analyzeSentiment,
+  formatSentimentSection,
+  analyzeProductMentions,
+  formatProductMentionsSection,
+} from '../services/sentimentEngine.js';
 
 // ─── Governance Constants ──────────────────────────────────────────────────
 
@@ -21,6 +27,12 @@ export const WILLIAM_SUMMERS_USER_ID = '005PU000001eUQDYA2';
 /** Terminal statuses excluded from all operational queries */
 const INACTIVE_STATUS_VALUES = ['Cancelled', 'Inactive', 'Expired'];
 const INACTIVE_STATUS_SOQL = INACTIVE_STATUS_VALUES.map((s) => `'${s}'`).join(', ');
+
+/**
+ * Standard active-client filter. Excludes terminal statuses AND null status (TCI ticket
+ * buyers / converted leads that never became clients). Use on every bulk Account query.
+ */
+const ACTIVE_CLIENT_FILTER = `Status__c NOT IN (${INACTIVE_STATUS_SOQL}) AND Status__c != null`;
 
 // ─── Tool Definitions ─────────────────────────────────────────────────────
 
@@ -186,18 +198,31 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
     LastActivityDate?: string; Contract_End_Date__c?: string;
     Contract_Renewal_Date__c?: string; Flagged_Status__c?: boolean;
     Delinquent__c?: boolean; Cancellation_or_Pause_Request_Date__c?: string;
+    AM_Spoke_to_Doctor__c?: string;
     OwnerId: string; Owner?: { Name: string };
   }
-  const [scheduledAccounts, openRefundRequests, upcomingRenewals] = await Promise.all([
+  // ── Orphaned Zoom Tasks (unlinked to any account) — last 14 days ──────────
+  interface OrphanTask {
+    Id: string; Subject?: string; ActivityDate?: string; OwnerId: string;
+    Owner?: { Name: string };
+    WhoId?: string; Who?: { Name: string; Email?: string };
+    ZVC__Zoom_Meeting__c?: string;
+    ZVC__Zoom_Meeting__r?: { ZVC__Meeting_Topic__c?: string } | null;
+    ZVC__Zoom_Call_Log__c?: string;
+  }
+  const orphanLookback    = new Date(Date.now() - 14 * 86_400_000).toISOString().split('T')[0];
+  const orphanOwnerFilter = owner_id ? `AND OwnerId = '${owner_id}'` : '';
+
+  const [scheduledAccounts, openRefundRequests, upcomingRenewals, orphanedZoomTasks] = await Promise.all([
     scheduledAccountIds.length > 0
       ? salesforceService.rawQuery<ScheduledAccount>(
           `SELECT Id, Name, Status__c, Total_Monthly_Recurring_Amount__c, Tier__c,
                   LastActivityDate, Contract_End_Date__c, Contract_Renewal_Date__c,
                   Flagged_Status__c, Delinquent__c, Cancellation_or_Pause_Request_Date__c,
-                  OwnerId, Owner.Name
+                  AM_Spoke_to_Doctor__c, OwnerId, Owner.Name
            FROM Account
            WHERE Id IN (${scheduledAccountIds.map((id) => `'${id}'`).join(',')})
-             AND Status__c NOT IN (${INACTIVE_STATUS_SOQL})
+             AND ${ACTIVE_CLIENT_FILTER}
              AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'`
         )
       : Promise.resolve([]),
@@ -225,6 +250,23 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
        ORDER BY CloseDate ASC
        LIMIT 25`
     ),
+
+    // Orphaned Zoom meetings (no WhatId) — last 14 days
+    salesforceService.rawQuery<OrphanTask>(
+      `SELECT Id, Subject, ActivityDate, OwnerId, Owner.Name,
+              WhoId, Who.Name, Who.Email,
+              ZVC__Zoom_Meeting__c,
+              ZVC__Zoom_Meeting__r.ZVC__Meeting_Topic__c,
+              ZVC__Zoom_Call_Log__c
+       FROM Task
+       WHERE (ZVC__Zoom_Meeting__c != null OR ZVC__Zoom_Call_Log__c != null)
+         AND WhatId = null
+         AND ActivityDate >= ${orphanLookback}
+         AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
+         ${orphanOwnerFilter}
+       ORDER BY ActivityDate DESC
+       LIMIT 25`
+    ).catch(() => [] as OrphanTask[]),
   ]);
 
   // Build refund map by account
@@ -247,6 +289,27 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
     `Generated: ${new Date().toLocaleString()}`,
     '',
   ];
+
+  // ── Section 0: Orphaned Zoom Activity Alert (shown FIRST if any exist) ───
+  if (orphanedZoomTasks.length > 0) {
+    lines.push(`## 🚨 ACTION REQUIRED — ${orphanedZoomTasks.length} Zoom Call${orphanedZoomTasks.length > 1 ? 's' : ''} Not Linked to Any Account`);
+    lines.push('*These recordings exist in Salesforce but have no account attached. Prophet cannot score them. Your health scores may be wrong until you fix this.*');
+    lines.push('');
+    for (const t of orphanedZoomTasks) {
+      const callType = t.ZVC__Zoom_Meeting__c ? '🎥 Meeting' : '📞 Phone Call';
+      const topic    = (t.ZVC__Zoom_Meeting__r as { ZVC__Meeting_Topic__c?: string } | null | undefined)?.ZVC__Meeting_Topic__c;
+      const subject  = topic ?? t.Subject ?? 'Zoom Activity';
+      const who      = t.Who as { Name?: string; Email?: string } | undefined;
+      const contact  = who?.Name ? ` | Contact: ${who.Name}` : '';
+      const amName   = (t.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown';
+      lines.push(`- ${callType} **${t.ActivityDate ?? 'Unknown date'}** — ${subject}${contact} | AM: ${amName}`);
+    }
+    lines.push('');
+    lines.push('**To fix:** Open each call in Salesforce → Edit → set the Account field. Or ask Prophet to link them for you.');
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+  }
 
   // ── Section 1: Scheduled Calls This Week ────────────────────────────────
   lines.push(`## 📞 Scheduled Calls This Week (${scheduledAccounts.length} accounts)`);
@@ -294,10 +357,19 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
       if (acct.Delinquent__c) lines.push(`💳 **Delinquent account**`);
       if (acct.Flagged_Status__c) lines.push(`🚩 **Flagged for attention**`);
 
-      // Contact + renewal
+      // Contact + renewal + doctor contact
+      const doctorDays = daysSince(acct.AM_Spoke_to_Doctor__c);
+      const doctorBadge = doctorDays === null
+        ? '🩺 Doctor: Never contacted'
+        : doctorDays > 60
+          ? `🩺 Doctor: ${doctorDays}d ago ⚠️`
+          : doctorDays > 30
+            ? `🩺 Doctor: ${doctorDays}d ago`
+            : `🩺 Doctor: ${doctorDays}d ago ✅`;
+
       lines.push(
         `Last contact: ${lastContact !== null ? `${lastContact}d ago` : 'Never'} | ` +
-        `Renewal: ${renewalDays !== null ? `${renewalDays}d` : 'Unknown'}`
+        `Renewal: ${renewalDays !== null ? `${renewalDays}d` : 'Unknown'} | ${doctorBadge}`
       );
 
       // Scheduled tasks
@@ -338,6 +410,65 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
       lines.push(`*...and ${openRefundRequests.length - 15} more*`);
     }
   }
+  lines.push('');
+
+  // ── Section 4: Doctor Contact Coaching ───────────────────────────────────
+  const neverContacted   = scheduledAccounts.filter((a) => !a.AM_Spoke_to_Doctor__c);
+  const over60Days       = scheduledAccounts.filter((a) => {
+    const d = daysSince(a.AM_Spoke_to_Doctor__c);
+    return d !== null && d > 60;
+  });
+  const between30and60   = scheduledAccounts.filter((a) => {
+    const d = daysSince(a.AM_Spoke_to_Doctor__c);
+    return d !== null && d > 30 && d <= 60;
+  });
+  const recentDoctor     = scheduledAccounts.filter((a) => {
+    const d = daysSince(a.AM_Spoke_to_Doctor__c);
+    return d !== null && d <= 30;
+  });
+
+  lines.push('## 🩺 Doctor Contact Coaching');
+  lines.push('*AMs who regularly reach the doctor have dramatically lower churn rates.*');
+  lines.push('');
+
+  if (neverContacted.length > 0) {
+    lines.push(`**🔴 Never contacted doctor (${neverContacted.length}):**`);
+    for (const a of neverContacted) {
+      lines.push(`- ${a.Name} (Owner: ${(a.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown'})`);
+    }
+    lines.push('');
+  }
+
+  if (over60Days.length > 0) {
+    lines.push(`**🟠 Doctor last contacted 60+ days ago (${over60Days.length}):**`);
+    for (const a of over60Days) {
+      const d = daysSince(a.AM_Spoke_to_Doctor__c)!;
+      lines.push(`- ${a.Name} — ${d}d ago`);
+    }
+    lines.push('');
+  }
+
+  if (between30and60.length > 0) {
+    lines.push(`**🟡 Doctor last contacted 30–60 days ago (${between30and60.length}):**`);
+    for (const a of between30and60) {
+      const d = daysSince(a.AM_Spoke_to_Doctor__c)!;
+      lines.push(`- ${a.Name} — ${d}d ago`);
+    }
+    lines.push('');
+  }
+
+  if (recentDoctor.length > 0) {
+    lines.push(`**🟢 Doctor contacted within 30 days (${recentDoctor.length}):** ✅`);
+    for (const a of recentDoctor) {
+      const d = daysSince(a.AM_Spoke_to_Doctor__c)!;
+      lines.push(`- ${a.Name} — ${d}d ago`);
+    }
+    lines.push('');
+  }
+
+  if (scheduledAccounts.length === 0) {
+    lines.push('No scheduled accounts to evaluate.');
+  }
 
   return lines.join('\n');
 }
@@ -377,8 +508,8 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     Account_Manager_Email__c?: string;
     Total_Monthly_Recurring_Amount__c?: number; Tier__c?: string;
     Management_Fee__c?: number; Budget__c?: number; SEO_Budget__c?: number; Social_Budget__c?: number;
-    Contract_Start_Date__c?: string; Contract_End_Date__c?: string; Contract_Renewal_Date__c?: string;
-    Last_Call__c?: string; LastActivityDate?: string;
+    Contract_End_Date__c?: string; Contract_Renewal_Date__c?: string;
+    LastActivityDate?: string;
     Next_Alignment_Call__c?: string; AM_Spoke_to_Doctor__c?: string;
     Engagement_Status__c?: string; Flagged_Status__c?: boolean; Delinquent__c?: boolean;
     Cancellation_or_Pause_Request_Date__c?: string; Upsell_Opportunity__c?: string;
@@ -408,6 +539,59 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     CreatedDate: string;
   }
 
+  interface ClientOnboarding {
+    Id: string;
+    Name: string;
+    Marketing_Launch_Date__c?: string;
+    Marketing_Start_Date__c?: string;
+    New_Or_Existing_Client__c?: string;
+    Video_Shoot_Done__c?: boolean;
+    HL_Creation__c?: string;
+    Client_Website__c?: string;
+    New_Client_Onboarding_Name__c?: string;
+    CreatedDate: string;
+  }
+
+  interface CompetitorSnapshot {
+    Id: string; Name: string;
+    Competitor_Name__c?: string; Competitor_Website__c?: string;
+    Google_Review_Count__c?: number; Previous_Review_Count__c?: number;
+    Review_Delta__c?: number; Google_Star_Rating__c?: number;
+    Running_Google_Ads__c?: boolean; Running_Facebook_Ads__c?: boolean;
+    Maps_Pack_Position__c?: number; Competitive_Pressure_Score__c?: number;
+    Is_Primary_Competitor__c?: boolean; Snapshot_Date__c?: string;
+  }
+
+  interface VideoCallRecord {
+    Id: string;
+    Name?: string;
+    StartDateTime?: string;
+    DurationInSeconds?: number;
+    IsRecorded?: boolean;
+  }
+
+  interface VideoCallParticipantRecord {
+    Id: string;
+    VideoCallId: string;
+    Name?: string;
+    Email?: string;
+    RelatedPersonId?: string;
+  }
+
+  interface UVCPRecord {
+    Id: string;
+    ActivityId: string;
+    PersonId?: string;
+    ParticipantType?: string;
+    TalkRatio?: number;
+    ListenRatio?: number;
+  }
+
+  interface TciOpportunity {
+    Id: string; Name: string; StageName: string; CloseDate: string;
+    Amount?: number; Phase__c?: string; Pricebook2?: { Name?: string };
+  }
+
   const [
     accountRaw,
     contacts,
@@ -421,6 +605,10 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     refundRequests,
     reassignments,
     zoomTasks,
+    phoneCallTasks,
+    competitorSnapshots,
+    onboardingRecords,
+    tciOpportunities,
   ] = await Promise.all([
     salesforceService.rawQuery<FullAccount>(
       `SELECT Id, Name, Phone, Website, BillingCity, BillingState,
@@ -430,8 +618,8 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
               Account_Manager_Email__c,
               Total_Monthly_Recurring_Amount__c, Tier__c, Management_Fee__c,
               Budget__c, SEO_Budget__c, Social_Budget__c,
-              Contract_Start_Date__c, Contract_End_Date__c, Contract_Renewal_Date__c,
-              Last_Call__c, LastActivityDate, Next_Alignment_Call__c, AM_Spoke_to_Doctor__c,
+              Contract_End_Date__c, Contract_Renewal_Date__c,
+              LastActivityDate, Next_Alignment_Call__c, AM_Spoke_to_Doctor__c,
               Engagement_Status__c, Flagged_Status__c, Delinquent__c,
               Cancellation_or_Pause_Request_Date__c, Upsell_Opportunity__c,
               Account_Intel__c, Specialty__c, Phase__c
@@ -504,6 +692,7 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
 
     salesforceService.rawQuery<FullTask>(
       `SELECT Id, Subject, ActivityDate,
+              Spoke_with_Doctor__c,
               ZVC__Zoom_Meeting__c,
               ZVC__Zoom_Meeting__r.ZVC__Meeting_AI_Summary__c,
               ZVC__Zoom_Meeting__r.ZVC__Meeting_Topic__c
@@ -512,12 +701,75 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
          AND ZVC__Zoom_Meeting__c != null
          AND ActivityDate >= ${new Date(Date.now() - 180 * 86_400_000).toISOString().split('T')[0]}
        ORDER BY ActivityDate DESC NULLS LAST
-       LIMIT 3`
+       LIMIT 10`
     ).catch(() => [] as FullTask[]),
+
+    salesforceService.rawQuery<{
+      Id: string; Subject?: string; ActivityDate?: string;
+      Spoke_with_Doctor__c?: boolean;
+      ZVC__Zoom_Call_Log__c?: string;
+      ZVC__Zoom_Call_Log__r?: { ZVC__AIC_Call_Summary__c?: string } | null;
+    }>(
+      `SELECT Id, Subject, ActivityDate, Spoke_with_Doctor__c,
+              ZVC__Zoom_Call_Log__c,
+              ZVC__Zoom_Call_Log__r.ZVC__AIC_Call_Summary__c
+       FROM Task
+       WHERE WhatId = '${id}'
+         AND ZVC__Zoom_Call_Log__c != null
+         AND ActivityDate >= ${new Date(Date.now() - 180 * 86_400_000).toISOString().split('T')[0]}
+       ORDER BY ActivityDate DESC NULLS LAST
+       LIMIT 10`
+    ).catch(() => [] as { Id: string; Subject?: string; ActivityDate?: string; Spoke_with_Doctor__c?: boolean; ZVC__Zoom_Call_Log__c?: string; ZVC__Zoom_Call_Log__r?: { ZVC__AIC_Call_Summary__c?: string } | null }[]),
+
+    salesforceService.rawQuery<CompetitorSnapshot>(
+      `SELECT Id, Name, Competitor_Name__c, Competitor_Website__c,
+              Google_Review_Count__c, Previous_Review_Count__c, Review_Delta__c,
+              Google_Star_Rating__c, Running_Google_Ads__c, Running_Facebook_Ads__c,
+              Maps_Pack_Position__c, Competitive_Pressure_Score__c,
+              Is_Primary_Competitor__c, Snapshot_Date__c
+       FROM Competitor_Snapshot__c
+       WHERE Account__c = '${id}'
+       ORDER BY Is_Primary_Competitor__c DESC NULLS LAST, Competitive_Pressure_Score__c DESC NULLS LAST
+       LIMIT 5`
+    ).catch(() => [] as CompetitorSnapshot[]),
+
+    salesforceService.rawQuery<ClientOnboarding>(
+      `SELECT Id, Name, Marketing_Launch_Date__c, Marketing_Start_Date__c,
+              New_Or_Existing_Client__c, Video_Shoot_Done__c, HL_Creation__c,
+              Client_Website__c, New_Client_Onboarding_Name__c, CreatedDate
+       FROM Client_Onboarding__c
+       WHERE Account__c = '${id}'
+       ORDER BY CreatedDate DESC
+       LIMIT 1`
+    ).catch(() => [] as ClientOnboarding[]),
+
+    // TCI Event opportunities — closed-won tickets and event purchases
+    salesforceService.rawQuery<TciOpportunity>(
+      `SELECT Id, Name, StageName, CloseDate, Amount, Phase__c, Pricebook2.Name
+       FROM Opportunity
+       WHERE AccountId = '${id}'
+         AND IsWon = true
+         AND (
+           Phase__c = 'TCI Events'
+           OR Name LIKE '%FABC%'
+           OR Name LIKE '%FAGC%'
+           OR Name LIKE '%Bootcamp%'
+           OR Name LIKE '%Full Arch Growth Conference%'
+           OR Pricebook2.Name LIKE '%TCI Event%'
+         )
+       ORDER BY CloseDate DESC
+       LIMIT 10`
+    ).catch(() => [] as TciOpportunity[]),
   ]);
 
   if (!accountRaw) throw new Error(`Account not found: ${id}`);
   resolvedName = accountRaw.Name;
+
+  // ── TCI Event account detection ───────────────────────────────────────────
+  // Primary signal: Status__c = null (universal for TCI ticket buyers / unconverted leads).
+  // Secondary signal: has closed-won TCI Event opportunities.
+  // Both cases get the same treatment — this is a prospect, not a Phase 2 marketing client.
+  const isTCIEventAccount = !accountRaw.Status__c || tciOpportunities.length > 0;
 
   // Product detection
   const wonOpps = await salesforceService.getOpportunities(id, { isWon: true, limit: 20 });
@@ -527,6 +779,44 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     ...assets.map((a) => a.Product2?.Name ?? a.Name),
   ];
   const activeProducts = detectProducts(rawProductNames);
+
+  // ── Doctor Engagement Score queries (sequential — needs contacts first) ──
+  const doctorContacts = contacts.filter((c) => c.Doctor__c === true);
+  const doctorContactIds = doctorContacts.map((c) => c.Id);
+  const videoCallLookback = new Date(Date.now() - 90 * 86_400_000).toISOString();
+
+  const [videoCalls, uvpData] = await Promise.all([
+    salesforceService.rawQuery<VideoCallRecord>(
+      `SELECT Id, Name, StartDateTime, DurationInSeconds, IsRecorded
+       FROM VideoCall
+       WHERE RelatedRecordId = '${id}'
+         AND StartDateTime >= ${videoCallLookback}
+       ORDER BY StartDateTime DESC
+       LIMIT 20`
+    ).catch(() => [] as VideoCallRecord[]),
+
+    doctorContactIds.length > 0
+      ? salesforceService.rawQuery<UVCPRecord>(
+          `SELECT Id, ActivityId, PersonId, ParticipantType, TalkRatio, ListenRatio
+           FROM UnifiedVideoCallParticipant
+           WHERE PersonId IN (${doctorContactIds.map((did) => `'${did}'`).join(',')})
+           LIMIT 50`
+        ).catch(() => [] as UVCPRecord[])
+      : Promise.resolve([] as UVCPRecord[]),
+  ]);
+
+  // Get doctor attendance per call (requires VideoCall IDs from above)
+  const videoCallIds = videoCalls.map((vc) => vc.Id);
+  let callParticipants: VideoCallParticipantRecord[] = [];
+  if (videoCallIds.length > 0 && doctorContactIds.length > 0) {
+    callParticipants = await salesforceService.rawQuery<VideoCallParticipantRecord>(
+      `SELECT Id, VideoCallId, Name, Email, RelatedPersonId
+       FROM VideoCallParticipant
+       WHERE VideoCallId IN (${videoCallIds.map((vid) => `'${vid}'`).join(',')})
+         AND RelatedPersonId IN (${doctorContactIds.map((did) => `'${did}'`).join(',')})
+       LIMIT 100`
+    ).catch(() => [] as VideoCallParticipantRecord[]);
+  }
 
   const healthScore = calculateHealthScore(
     tasks,
@@ -553,6 +843,25 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
 
   // Critical Alerts
   const alerts: string[] = [];
+
+  // TCI Event account — surface at the very top before anything else
+  if (isTCIEventAccount) {
+    const hasNullStatus  = !accountRaw.Status__c;
+    const eventPurchases = tciOpportunities.map(o => {
+      const amt = o.Amount ? ` ($${o.Amount.toLocaleString()})` : '';
+      const pricebook = o.Pricebook2?.Name ? ` [${o.Pricebook2.Name}]` : '';
+      return `${o.Name}${amt}${pricebook} — closed ${o.CloseDate}`;
+    });
+    alerts.push(
+      `🎟️ TCI EVENT ACCOUNT — Conference ticket purchaser, not a Phase 2 marketing client. ` +
+      (hasNullStatus ? `Marketing Status not set (Status__c = null). ` : '') +
+      (eventPurchases.length > 0
+        ? `Ticket purchase(s): ${eventPurchases.join(' | ')}. `
+        : `No closed ticket sale found — may be a converted lead. `) +
+      `Goal: convert to active Phase 2 client at or after the event.`
+    );
+  }
+
   if (refundRequests.length > 0) {
     const amt = refundRequests[0].Refund_Amount__c
       ? ` — $${refundRequests[0].Refund_Amount__c.toLocaleString()}`
@@ -566,6 +875,9 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
   if (accountRaw.Flagged_Status__c) alerts.push(`🚩 FLAGGED FOR ATTENTION`);
   if (openCases.some((c) => c.Priority === 'High' || c.IsEscalated)) {
     alerts.push(`⚠️ HIGH-PRIORITY OPEN CASE`);
+  }
+  if (onboardingRecords.length === 0 && !isTCIEventAccount) {
+    alerts.push(`📋 NO CLIENT ONBOARDING RECORD — required for all clients since Feb 1, 2026`);
   }
   const contractRenewalDate = accountRaw.Contract_Renewal_Date__c ?? accountRaw.Contract_End_Date__c;
   const renewalDaysFromContract = daysUntil(contractRenewalDate);
@@ -640,6 +952,27 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
   }
   lines.push('');
 
+  // Client Onboarding Status
+  const onboarding = onboardingRecords[0];
+  lines.push('## 📋 Client Onboarding Status');
+  if (isTCIEventAccount) {
+    lines.push('*TCI Event account — Client Onboarding record not required until converted to Phase 2 client.*');
+  } else if (!onboarding) {
+    lines.push('⚠️ **No Client Onboarding record found.** Required for all clients since Feb 1, 2026.');
+    lines.push('*Action: Complete the Client Onboarding screen flow and create a record for this account.*');
+  } else {
+    lines.push(`**Onboarding Record:** ${onboarding.New_Client_Onboarding_Name__c ?? onboarding.Name}`);
+    lines.push(`**Client Type:** ${onboarding.New_Or_Existing_Client__c ?? 'Not set'}`);
+    if (onboarding.Marketing_Start_Date__c) lines.push(`**Marketing Start:** ${onboarding.Marketing_Start_Date__c}`);
+    if (onboarding.Marketing_Launch_Date__c) lines.push(`**Marketing Launch:** ${onboarding.Marketing_Launch_Date__c}`);
+    if (onboarding.Client_Website__c) lines.push(`**Website:** ${onboarding.Client_Website__c}`);
+    const videoStatus = onboarding.Video_Shoot_Done__c ? '✅ Complete' : '❌ Not done';
+    lines.push(`**Video Shoot:** ${videoStatus}`);
+    if (onboarding.HL_Creation__c) lines.push(`**HL Creation:** ${onboarding.HL_Creation__c}`);
+    lines.push(`*Record created: ${onboarding.CreatedDate.split('T')[0]}*`);
+  }
+  lines.push('');
+
   // Active PDM Products (from product detection)
   lines.push('## Active PDM Products');
   if (activeProducts.length > 0) {
@@ -652,6 +985,124 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     lines.push(`\n*Not currently using: ${missingProducts.join(', ')}*`);
   }
   lines.push('');
+
+  // ── Services Discussed in Recent Calls ────────────────────────────────
+  const callsForProductScan = [
+    ...zoomTasks
+      .filter((t) => t.ZVC__Zoom_Meeting__r?.ZVC__Meeting_AI_Summary__c)
+      .map((t) => ({ date: t.ActivityDate ?? '', summary: t.ZVC__Zoom_Meeting__r!.ZVC__Meeting_AI_Summary__c! })),
+    ...phoneCallTasks
+      .filter((t) => t.ZVC__Zoom_Call_Log__r?.ZVC__AIC_Call_Summary__c)
+      .map((t) => ({ date: t.ActivityDate ?? '', summary: t.ZVC__Zoom_Call_Log__r!.ZVC__AIC_Call_Summary__c! })),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+
+  if (callsForProductScan.length > 0) {
+    const productMentions = analyzeProductMentions(callsForProductScan, activeProducts, PRODUCT_KEYWORDS);
+    lines.push(...formatProductMentionsSection(productMentions, activeProducts));
+  }
+
+  // ── Competitive Gap Analysis ───────────────────────────────────────────
+  if (competitorSnapshots.length > 0) {
+    const primary = competitorSnapshots.find((s) => s.Is_Primary_Competitor__c) ?? competitorSnapshots[0];
+    const compName = primary.Competitor_Name__c ?? primary.Name ?? 'Primary Competitor';
+    const snapshotDate = primary.Snapshot_Date__c ?? 'recent';
+    const pressureScore = primary.Competitive_Pressure_Score__c;
+
+    const clientHasPPC    = activeProducts.some((p) => /ppc|paid|adword|google ad/i.test(p));
+    const clientHasSocial = activeProducts.some((p) => /social|facebook|instagram/i.test(p));
+
+    lines.push('## ⚔️ Competitive Gap Analysis — "They\'re Doing This, You\'re Not"');
+    lines.push(
+      `**Primary Competitor:** ${compName}` +
+      `${primary.Competitor_Website__c ? ` (${primary.Competitor_Website__c})` : ''}` +
+      `${pressureScore !== undefined ? ` | Pressure Score: ${pressureScore}/100` : ''}` +
+      ` | Data as of: ${snapshotDate}`
+    );
+    lines.push('');
+
+    const gaps: string[] = [];
+    const strengths: string[] = [];
+
+    // Reviews
+    if (primary.Google_Review_Count__c !== undefined) {
+      const reviewStr = `${primary.Google_Review_Count__c} reviews` +
+        `${primary.Google_Star_Rating__c ? ` @ ${primary.Google_Star_Rating__c}⭐` : ''}`;
+      gaps.push(`📊 **Reviews:** Competitor has ${reviewStr}`);
+    }
+
+    // Google Ads
+    if (primary.Running_Google_Ads__c) {
+      if (!clientHasPPC) {
+        gaps.push(`🚨 **Google Ads GAP:** Competitor is running Google Ads — client has NO PPC service`);
+      } else {
+        strengths.push(`✅ Google Ads: Both running`);
+      }
+    }
+
+    // Facebook/Social Ads
+    if (primary.Running_Facebook_Ads__c) {
+      if (!clientHasSocial) {
+        gaps.push(`🚨 **Social Ads GAP:** Competitor is running Facebook/Instagram Ads — client has NO social advertising`);
+      } else {
+        strengths.push(`✅ Social Ads: Both running`);
+      }
+    }
+
+    // Maps Pack
+    if (primary.Maps_Pack_Position__c !== undefined && primary.Maps_Pack_Position__c !== null) {
+      const pos = primary.Maps_Pack_Position__c;
+      if (pos >= 1 && pos <= 3) {
+        gaps.push(`🚨 **Maps Pack GAP:** Competitor ranks #${pos} in the Google Maps Pack`);
+      }
+    }
+
+    for (const g of gaps) lines.push(`- ${g}`);
+    for (const s of strengths) lines.push(`- ${s}`);
+
+    if (gaps.length === 0 && strengths.length === 0) {
+      lines.push('- No specific signal gaps detected in stored snapshot data.');
+    }
+
+    // Secondary competitors
+    if (competitorSnapshots.length > 1) {
+      lines.push('');
+      lines.push('**Also monitoring:**');
+      for (const snap of competitorSnapshots.slice(1)) {
+        const name = snap.Competitor_Name__c ?? snap.Name;
+        const pressure = snap.Competitive_Pressure_Score__c !== undefined
+          ? ` | Pressure: ${snap.Competitive_Pressure_Score__c}/100` : '';
+        const reviews = snap.Google_Review_Count__c !== undefined
+          ? ` | ${snap.Google_Review_Count__c} reviews` : '';
+        lines.push(`- ${name}${reviews}${pressure}`);
+      }
+    }
+    lines.push('');
+
+    // ── "Do Nothing" Projector ─────────────────────────────────────────
+    const delta   = primary.Review_Delta__c;
+    const current = primary.Google_Review_Count__c;
+
+    if (delta !== undefined && delta !== null && delta > 0 && current !== undefined) {
+      // Review_Delta__c = reviews gained since last snapshot (weekly cadence assumed)
+      const weeklyGain   = delta;
+      const monthlyGain  = Math.round(weeklyGain * 4.3);
+      const annualGain   = Math.round(weeklyGain * 52);
+      const in3Months    = current + Math.round(weeklyGain * 13);
+      const in12Months   = current + annualGain;
+
+      lines.push('## 📉 What Happens If You Do Nothing');
+      lines.push(
+        `${compName} is gaining ~**${weeklyGain} reviews/week** ` +
+        `(currently at ${current}${primary.Google_Star_Rating__c ? ` @ ${primary.Google_Star_Rating__c}⭐` : ''}).`
+      );
+      lines.push('');
+      lines.push(`At this pace, in **3 months** they\'ll have **${in3Months} reviews**.`);
+      lines.push(`In **12 months** they\'ll have **${in12Months} reviews** — **+${annualGain} more than today**.`);
+      lines.push('');
+      lines.push('*Every month without a review strategy widens the gap. This is a math problem, not a marketing opinion.*');
+      lines.push('');
+    }
+  }
 
   // Business Objectives
   if (businessObjectives.length > 0) {
@@ -677,6 +1128,101 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     lines.push('');
   }
 
+  // ── Doctor Engagement Score ────────────────────────────────────────────
+  if (videoCalls.length > 0 || uvpData.length > 0) {
+    const docName = doctorContacts[0]?.Name ?? 'Doctor';
+    lines.push('## 🩺 Doctor Engagement Score');
+
+    // Attendance section
+    if (videoCalls.length > 0) {
+      const callsWithDoctor = new Set(callParticipants.map((p) => p.VideoCallId));
+      const attendanceRate  = Math.round((callsWithDoctor.size / videoCalls.length) * 100);
+
+      lines.push(
+        `**${docName}** attended **${callsWithDoctor.size} of ${videoCalls.length} calls** ` +
+        `in the last 90 days (${attendanceRate}% attendance rate)`
+      );
+
+      if (attendanceRate === 0) {
+        lines.push('🔴 Doctor has not been on any recorded calls in 90 days — high engagement risk');
+      } else if (attendanceRate < 30) {
+        lines.push('🔴 Low doctor engagement — under 30% call attendance');
+      } else if (attendanceRate < 60) {
+        lines.push('🟡 Moderate doctor engagement — target is 60%+ attendance');
+      } else {
+        lines.push('🟢 Strong doctor engagement — doctor regularly joins calls');
+      }
+    } else {
+      lines.push('No recorded VideoCall records found for this account in the last 90 days.');
+    }
+
+    // TalkRatio section
+    const talkRatios = uvpData.filter(
+      (p) => p.TalkRatio !== undefined && p.TalkRatio !== null
+    );
+    if (talkRatios.length > 0) {
+      const avgTalk   = Math.round(talkRatios.reduce((s, p) => s + (p.TalkRatio ?? 0), 0) / talkRatios.length);
+      const avgListen = Math.round(talkRatios.reduce((s, p) => s + (p.ListenRatio ?? 0), 0) / talkRatios.length);
+      lines.push(`**Average Talk Ratio:** ${avgTalk}% talking / ${avgListen}% listening (across ${talkRatios.length} CI-recorded calls)`);
+
+      // Trend: data is returned most recent first from the PersonId query — compare halves
+      if (talkRatios.length >= 4) {
+        const half       = Math.floor(talkRatios.length / 2);
+        const recentAvg  = Math.round(talkRatios.slice(0, half).reduce((s, p) => s + (p.TalkRatio ?? 0), 0) / half);
+        const olderAvg   = Math.round(talkRatios.slice(half).reduce((s, p) => s + (p.TalkRatio ?? 0), 0) / half);
+        const trendLabel = recentAvg > olderAvg + 5
+          ? '📈 Increasing — doctor more engaged recently'
+          : recentAvg < olderAvg - 5
+            ? '📉 Declining — doctor talking less, watch for disengagement'
+            : '➡️ Stable';
+        lines.push(`**Talk Ratio Trend:** ${trendLabel} (${olderAvg}% → ${recentAvg}%)`);
+      }
+    } else if (doctorContactIds.length === 0) {
+      lines.push('*No doctor contact on record — TalkRatio unavailable.*');
+    } else {
+      lines.push('*No CI-recorded call data found for the doctor contact.*');
+    }
+
+    lines.push('');
+  }
+
+  // ── Sentiment Analysis ─────────────────────────────────────────────────
+  const sentimentInputs = [
+    ...zoomTasks
+      .filter((t) => t.ZVC__Zoom_Meeting__r?.ZVC__Meeting_AI_Summary__c)
+      .map((t) => ({
+        date:        t.ActivityDate ?? '',
+        subject:     t.Subject ?? 'Meeting',
+        callType:    'meeting' as const,
+        summary:     t.ZVC__Zoom_Meeting__r!.ZVC__Meeting_AI_Summary__c!,
+        doctorOnCall: t.Spoke_with_Doctor__c ?? false,
+      })),
+    ...phoneCallTasks
+      .filter((t) => t.ZVC__Zoom_Call_Log__r?.ZVC__AIC_Call_Summary__c)
+      .map((t) => ({
+        date:        t.ActivityDate ?? '',
+        subject:     t.Subject ?? 'Call',
+        callType:    'call' as const,
+        summary:     t.ZVC__Zoom_Call_Log__r!.ZVC__AIC_Call_Summary__c!,
+        doctorOnCall: t.Spoke_with_Doctor__c ?? false,
+      })),
+  ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10);
+
+  const sentiment = analyzeSentiment(sentimentInputs);
+
+  // Add sentiment alert to critical alerts if needed
+  if (sentiment.hasAlert) {
+    if (sentiment.competitorMentions.length > 0) {
+      alerts.push(`🚨 COMPETITOR MENTIONED IN CALLS: ${sentiment.competitorMentions.join(', ')}`);
+    }
+    if (sentiment.trend === 'Declining') {
+      alerts.push(`📉 SENTIMENT DECLINING — last call scored ${sentiment.callBreakdown[0]?.score ?? '?'}/100`);
+    }
+    if (sentiment.overallLabel === 'Critical') {
+      alerts.push(`🚨 CRITICAL SENTIMENT — overall score ${sentiment.overallScore}/100`);
+    }
+  }
+
   // Zoom Meeting AI Summaries
   const zoomWithSummaries = zoomTasks.filter((t) => t.ZVC__Zoom_Meeting__r?.ZVC__Meeting_AI_Summary__c);
   if (zoomWithSummaries.length > 0) {
@@ -689,6 +1235,10 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
       lines.push('');
     }
   }
+
+  // Sentiment Analysis Section
+  lines.push(...formatSentimentSection(sentiment));
+  lines.push('');
 
   // Key Contacts
   lines.push('## Key Contacts');

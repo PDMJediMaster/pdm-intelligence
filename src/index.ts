@@ -18,6 +18,7 @@ import { competitiveAlertTools, competitiveAlertHandlers } from './tools/competi
 import { leadIntelligenceTools, leadIntelligenceHandlers } from './tools/leadIntelligence.js';
 import { renewalProofTools, renewalProofHandlers } from './tools/renewalProof.js';
 import { healthScannerTools, healthScannerHandlers } from './tools/healthScanner.js';
+import { amCoachingTools, amCoachingHandlers } from './tools/amCoaching.js';
 
 config();
 
@@ -34,6 +35,7 @@ const ALL_TOOLS = [
   ...leadIntelligenceTools,
   ...renewalProofTools,
   ...healthScannerTools,
+  ...amCoachingTools,
 ];
 
 const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
@@ -47,6 +49,7 @@ const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
   ...leadIntelligenceHandlers,
   ...renewalProofHandlers,
   ...healthScannerHandlers,
+  ...amCoachingHandlers,
 };
 
 // ─── MCP Server Factory ───────────────────────────────────────────────────
@@ -55,7 +58,7 @@ const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
 
 function createMcpServer(): Server {
   const server = new Server(
-    { name: 'foresight', version: '1.0.0' },
+    { name: 'prophet', version: '1.0.0' },
     { capabilities: { tools: {} } }
   );
 
@@ -107,7 +110,7 @@ async function startHttp(): Promise<void> {
     // Health check — Railway uses this to confirm the service is up
     if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', server: 'foresight', tools: ALL_TOOLS.length }));
+      res.end(JSON.stringify({ status: 'ok', server: 'prophet', tools: ALL_TOOLS.length }));
       return;
     }
 
