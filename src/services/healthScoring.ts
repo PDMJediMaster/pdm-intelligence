@@ -22,19 +22,23 @@ function scoreEngagement(
   daysBack = ENGAGEMENT_SCORING.LOOKBACK_DAYS
 ): { score: number; details: string } {
   const cutoff = Date.now() - daysBack * 86_400_000;
-  // Use ActivityDate as the primary interaction date (not CreatedDate).
-  // SF email tasks are often logged with Type = null and "Email:" in Subject — count those too.
+  const now    = Date.now();
+  // Use ActivityDate as primary interaction date (not CreatedDate).
+  // Exclude: future-dated tasks (not happened yet) and Prophet system-generated tasks.
+  // Include: any past task regardless of Status — SF email logging often sets Status='Not Started'.
   const recent = tasks.filter((t) => {
     const dateStr = t.ActivityDate ?? t.CreatedDate?.split('T')[0];
     if (!dateStr) return false;
-    return new Date(dateStr).getTime() >= cutoff && t.Status !== 'Open' && t.Status !== 'Not Started';
+    const taskTime = new Date(dateStr).getTime();
+    const isProphetTask = (t.Subject ?? '').startsWith('[Prophet]');
+    return taskTime >= cutoff && taskTime <= now && !isProphetTask;
   });
 
-  // Infer type from Subject prefix when Type field is blank/null
+  // Infer type from Subject prefix when Type field is blank/null (common for logged emails)
   const calls    = recent.filter((t) =>
     t.Type === 'Call'    || (!t.Type && /^call/i.test(t.Subject ?? '')));
   const emails   = recent.filter((t) =>
-    t.Type === 'Email'   || (!t.Type && /^(email|re:|fwd:|fw:)/i.test(t.Subject ?? '')));
+    t.Type === 'Email'   || (!t.Type && /^(email|re:|fwd:|fw:|meeting recap|call recap)/i.test(t.Subject ?? '')));
   const meetings = recent.filter((t) =>
     t.Type === 'Meeting' || (t.Type === 'Other' && /meet|zoom|video/i.test(t.Subject ?? '')));
 
