@@ -295,7 +295,11 @@ class SalesforceService {
              Status, Priority, ActivityDate, Type, CreatedDate,
              CallType, CallDurationInSeconds
       FROM Task
-      WHERE WhatId = '${accountId}'
+      WHERE (
+        WhatId = '${accountId}'
+        OR WhatId IN (SELECT Id FROM Opportunity WHERE AccountId = '${accountId}')
+        OR (WhoId IN (SELECT Id FROM Contact WHERE AccountId = '${accountId}') AND WhatId = null)
+      )
         AND CreatedDate >= ${since}T00:00:00Z
       ORDER BY CreatedDate DESC
       LIMIT 50

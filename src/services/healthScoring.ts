@@ -19,7 +19,8 @@ import type { PDMProduct } from '../constants.js';
 
 function scoreEngagement(
   tasks: SalesforceTask[],
-  daysBack = ENGAGEMENT_SCORING.LOOKBACK_DAYS
+  daysBack = ENGAGEMENT_SCORING.LOOKBACK_DAYS,
+  recentVideoCallCount = 0
 ): { score: number; details: string } {
   const cutoff = Date.now() - daysBack * 86_400_000;
   const now    = Date.now();
@@ -30,8 +31,9 @@ function scoreEngagement(
     const dateStr = t.ActivityDate ?? t.CreatedDate?.split('T')[0];
     if (!dateStr) return false;
     const taskTime = new Date(dateStr).getTime();
-    const isProphetTask = (t.Subject ?? '').startsWith('[Prophet]');
-    return taskTime >= cutoff && taskTime <= now && !isProphetTask;
+    const subj = t.Subject ?? '';
+    const isSystemTask = subj.startsWith('[Prophet]') || subj.startsWith('Pardot List Email:');
+    return taskTime >= cutoff && taskTime <= now && !isSystemTask;
   });
 
   // Infer type from Subject prefix when Type field is blank/null/generic.
@@ -47,15 +49,18 @@ function scoreEngagement(
   const meetings = recent.filter((t) =>
     t.Type === 'Meeting' || (noMeaningfulType(t) && /meet|zoom|video/i.test(t.Subject ?? '')));
 
-  const callPts    = Math.min(calls.length    * ENGAGEMENT_SCORING.CALL_POINTS,    ENGAGEMENT_SCORING.CALL_MAX);
-  const emailPts   = Math.min(emails.length   * ENGAGEMENT_SCORING.EMAIL_POINTS,   ENGAGEMENT_SCORING.EMAIL_MAX);
-  const meetingPts = Math.min(meetings.length * ENGAGEMENT_SCORING.MEETING_POINTS, ENGAGEMENT_SCORING.MEETING_MAX);
+  const totalMeetings = meetings.length + recentVideoCallCount;
+
+  const callPts    = Math.min(calls.length  * ENGAGEMENT_SCORING.CALL_POINTS,    ENGAGEMENT_SCORING.CALL_MAX);
+  const emailPts   = Math.min(emails.length * ENGAGEMENT_SCORING.EMAIL_POINTS,   ENGAGEMENT_SCORING.EMAIL_MAX);
+  const meetingPts = Math.min(totalMeetings * ENGAGEMENT_SCORING.MEETING_POINTS, ENGAGEMENT_SCORING.MEETING_MAX);
 
   const score = Math.min(callPts + emailPts + meetingPts, 100);
+  const vcNote = recentVideoCallCount > 0 ? `, ${recentVideoCallCount} video call(s)` : '';
   const details = [
     `${calls.length} call(s)`,
     `${emails.length} email(s)`,
-    `${meetings.length} meeting(s)`,
+    `${meetings.length} meeting(s)${vcNote}`,
     `in last ${daysBack} days`,
   ].join(', ');
 
@@ -164,9 +169,10 @@ export function calculateHealthScore(
   tasks: SalesforceTask[],
   openCases: SalesforceCase[],
   opportunities: SalesforceOpportunity[],
-  contractEndDate?: string
+  contractEndDate?: string,
+  recentVideoCallCount = 0
 ): HealthScore {
-  const { score: engagementRaw, details: engagementDetails } = scoreEngagement(tasks);
+  const { score: engagementRaw, details: engagementDetails } = scoreEngagement(tasks, undefined, recentVideoCallCount);
   const { score: casesRaw,      details: casesDetails      } = scoreCases(openCases);
   const { score: renewalRaw,    details: renewalDetails    } = scoreRenewal(opportunities, contractEndDate);
 

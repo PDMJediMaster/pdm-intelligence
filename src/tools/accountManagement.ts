@@ -544,6 +544,11 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
       ZVC__Meeting_Topic__c?: string;
     } | null;
   }
+  interface EmailMessageRecord {
+    Id: string; Subject?: string; TextBody?: string;
+    FromName?: string; FromAddress?: string; ToAddress?: string;
+    MessageDate?: string; CreatedDate: string;
+  }
   interface Reassignment {
     Id: string; Name: string;
     Previous_AM__c?: string; Previous_AM__r?: { Name: string };
@@ -622,6 +627,7 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     competitorSnapshots,
     onboardingRecords,
     tciOpportunities,
+    emailMessages,
   ] = await Promise.all([
     salesforceService.rawQuery<FullAccount>(
       `SELECT Id, Name, Phone, Website, BillingCity, BillingState,
@@ -659,10 +665,14 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
               ZVC__Zoom_Meeting__r.ZVC__Meeting_AI_Summary__c,
               ZVC__Zoom_Meeting__r.ZVC__Meeting_Topic__c
        FROM Task
-       WHERE WhatId = '${id}'
+       WHERE (
+         WhatId = '${id}'
+         OR WhatId IN (SELECT Id FROM Opportunity WHERE AccountId = '${id}')
+         OR (WhoId IN (SELECT Id FROM Contact WHERE AccountId = '${id}') AND WhatId = null)
+       )
          AND ActivityDate >= ${since90}
        ORDER BY ActivityDate DESC NULLS LAST
-       LIMIT 20`
+       LIMIT 30`
     ),
 
     salesforceService.getOpportunities(id, { isClosed: false }),
@@ -773,10 +783,47 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
        ORDER BY CloseDate DESC
        LIMIT 10`
     ).catch(() => [] as TciOpportunity[]),
+
+    // EmailMessage records — emails sent via Salesforce Send Email button
+    // These are stored separately from Task records and appear in the Activity Timeline
+    salesforceService.rawQuery<EmailMessageRecord>(
+      `SELECT Id, Subject, TextBody, FromName, FromAddress, ToAddress, MessageDate, CreatedDate
+       FROM EmailMessage
+       WHERE RelatedToId = '${id}'
+         AND MessageDate >= ${since90}
+       ORDER BY MessageDate DESC NULLS LAST
+       LIMIT 25`
+    ).catch(() => [] as EmailMessageRecord[]),
   ]);
 
   if (!accountRaw) throw new Error(`Account not found: ${id}`);
   resolvedName = accountRaw.Name;
+
+  // Merge EmailMessage records into the tasks array as synthetic Task-like entries.
+  // EmailMessage stores emails sent via Salesforce Send Email — these appear in the Activity
+  // Timeline but are a separate object from Task. Merging here ensures they count for
+  // engagement scoring and show in Recent Activity. Use MessageDate as ActivityDate.
+  const emailMessageTasks: FullTask[] = emailMessages.map((em) => ({
+    Id: em.Id,
+    Subject: em.Subject ?? 'Email',
+    Description: em.TextBody,
+    Type: 'Email',
+    ActivityDate: em.MessageDate?.split('T')[0],
+    CreatedDate: em.CreatedDate,
+    Status: 'Completed',
+    OwnerId: '',
+  }));
+  // Deduplicate: some EmailMessages may have an associated Task (via ActivityId) already in tasks.
+  // Use Subject+ActivityDate as a loose key since we don't have ActivityId on FullTask.
+  const existingKeys = new Set(tasks.map((t) => `${t.Subject}|${t.ActivityDate ?? ''}`));
+  const newEmailTasks = emailMessageTasks.filter(
+    (em) => !existingKeys.has(`${em.Subject}|${em.ActivityDate ?? ''}`)
+  );
+  const allTasks = [...tasks, ...newEmailTasks].sort((a, b) => {
+    const da = a.ActivityDate ?? a.CreatedDate.split('T')[0];
+    const db = b.ActivityDate ?? b.CreatedDate.split('T')[0];
+    return db.localeCompare(da);
+  });
 
   // ── TCI Event account detection ───────────────────────────────────────────
   // Primary signal: Status__c = null (universal for TCI ticket buyers / unconverted leads).
@@ -831,11 +878,18 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     ).catch(() => [] as VideoCallParticipantRecord[]);
   }
 
+  const thirtyDaysCutoff = Date.now() - 30 * 86_400_000;
+  const recentVideoCallCount = videoCalls.filter((vc) => {
+    const t = vc.StartDateTime ? new Date(vc.StartDateTime).getTime() : 0;
+    return t >= thirtyDaysCutoff && t <= Date.now();
+  }).length;
+
   const healthScore = calculateHealthScore(
-    tasks,
+    allTasks,
     openCases,
     opportunities,
-    accountRaw.Contract_End_Date__c
+    accountRaw.Contract_End_Date__c,
+    recentVideoCallCount
   );
 
   const nextRenewal = opportunities
@@ -1293,10 +1347,10 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
 
   // Recent Activity (full notes)
   lines.push('## Recent Activity (Last 90 Days)');
-  if (tasks.length === 0) {
+  if (allTasks.length === 0) {
     lines.push('No recorded activity in the last 90 days.');
   } else {
-    for (const t of tasks.slice(0, 10)) {
+    for (const t of allTasks.slice(0, 10)) {
       const doctorBadge = t.Spoke_with_Doctor__c ? ' 🩺' : '';
       lines.push(
         `### [${t.ActivityDate ?? t.CreatedDate.split('T')[0]}] ${t.Type ?? 'Task'}: ${t.Subject}${doctorBadge}`
