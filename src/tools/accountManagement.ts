@@ -237,17 +237,19 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
     ).catch(() => [] as { Id: string; Account__c: string; Name: string; Status__c?: string; Refund_Amount__c?: number }[]),
 
     salesforceService.rawQuery<{
-      Id: string; Name: string; StageName: string; CloseDate: string;
-      Amount?: number; AccountId: string; Account?: { Name: string; Owner?: { Name: string } };
+      Id: string; Name: string; Status__c?: string;
+      Contract_Renewal_Date__c: string;
+      Total_Monthly_Recurring_Amount__c?: number;
+      OwnerId: string; Owner?: { Name: string };
     }>(
-      `SELECT Id, Name, StageName, CloseDate, Amount, AccountId, Account.Name, Account.Owner.Name
-       FROM Opportunity
-       WHERE IsClosed = false
-         AND CloseDate >= TODAY
-         AND CloseDate <= ${in30Days}
+      `SELECT Id, Name, Status__c, Contract_Renewal_Date__c, Total_Monthly_Recurring_Amount__c, OwnerId, Owner.Name
+       FROM Account
+       WHERE Contract_Renewal_Date__c >= TODAY
+         AND Contract_Renewal_Date__c <= ${in30Days}
+         AND ${ACTIVE_CLIENT_FILTER}
          AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
-         ${ownerFilter}
-       ORDER BY CloseDate ASC
+         ${ownerFilterAcc}
+       ORDER BY Contract_Renewal_Date__c ASC
        LIMIT 25`
     ),
 
@@ -367,8 +369,16 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
             ? `🩺 Doctor: ${doctorDays}d ago`
             : `🩺 Doctor: ${doctorDays}d ago ✅`;
 
+      // If LastActivityDate is null (no completed activity), show scheduled call context
+      const nextScheduledDate = tasks.length > 0 ? tasks[0].ActivityDate : null;
+      const lastContactStr = lastContact !== null
+        ? `${lastContact}d ago`
+        : nextScheduledDate
+          ? `No logged activity (call scheduled ${nextScheduledDate})`
+          : 'Never';
+
       lines.push(
-        `Last contact: ${lastContact !== null ? `${lastContact}d ago` : 'Never'} | ` +
+        `Last contact: ${lastContactStr} | ` +
         `Renewal: ${renewalDays !== null ? `${renewalDays}d` : 'Unknown'} | ${doctorBadge}`
       );
 
@@ -381,17 +391,20 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
   }
 
   // ── Section 2: Upcoming Renewals (30 days) ───────────────────────────────
-  lines.push(`## 🔄 Renewals Closing in Next 30 Days (${upcomingRenewals.length})`);
+  lines.push(`## 🔄 Renewals in Next 30 Days (${upcomingRenewals.length})`);
   if (upcomingRenewals.length === 0) {
-    lines.push('No renewals closing in the next 30 days.');
+    lines.push('No contract renewals in the next 30 days.');
   } else {
     for (const r of upcomingRenewals) {
-      const days = daysUntil(r.CloseDate) ?? 0;
-      const amt  = r.Amount ? ` — $${r.Amount.toLocaleString()}` : '';
-      const owner = r.Account?.Owner?.Name ?? 'Unknown';
+      const days  = daysUntil(r.Contract_Renewal_Date__c) ?? 0;
+      const mrr   = r.Total_Monthly_Recurring_Amount__c
+        ? ` — $${r.Total_Monthly_Recurring_Amount__c.toLocaleString()}/mo MRR`
+        : '';
+      const owner = (r.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown';
+      const urgencyFlag = days <= 7 ? ' 🚨' : days <= 14 ? ' ⚠️' : '';
       lines.push(
-        `- **${r.Account?.Name ?? r.AccountId}** | ${r.StageName} | ` +
-        `Closes ${r.CloseDate} (${days}d)${amt} | Owner: ${owner}`
+        `- **${r.Name}** | ${r.Status__c ?? 'Unknown'} | ` +
+        `Renews ${r.Contract_Renewal_Date__c} (${days}d)${mrr} | Owner: ${owner}${urgencyFlag}`
       );
     }
   }
