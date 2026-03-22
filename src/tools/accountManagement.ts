@@ -1389,6 +1389,18 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     lines.push('');
   }
 
+  // DEBUG — remove after engagement scoring is confirmed working
+  const cutoff30 = Date.now() - 30 * 86_400_000;
+  const recentDebug = allTasks.filter((t) => {
+    const d = t.ActivityDate ?? t.CreatedDate?.split('T')[0];
+    return d ? new Date(d).getTime() >= cutoff30 : false;
+  });
+  lines.push('## [DEBUG] Task Scoring Inputs');
+  lines.push(`- allTasks total: ${allTasks.length}`);
+  lines.push(`- within 30 days: ${recentDebug.length}`);
+  recentDebug.forEach((t) => lines.push(`  - [${t.ActivityDate ?? t.CreatedDate?.split('T')[0]}] Type=${JSON.stringify(t.Type)} Subj=${t.Subject?.slice(0, 60)}`));
+  lines.push('');
+
   // Health Score Breakdown
   lines.push(`## Health Score: ${healthScore.overall}/100 — ${healthScore.rating}`);
   lines.push(`- Engagement (40%): ${healthScore.engagement}/100 — ${healthScore.breakdown.engagementDetails}`);
