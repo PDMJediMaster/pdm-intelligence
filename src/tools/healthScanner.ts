@@ -466,56 +466,68 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
   let tasksCreated = 0;
   let scoresWritten = 0;
 
+  // ── Helper: run async jobs in parallel batches ──────────────────────────
+  async function batchAll<T>(
+    items: T[],
+    batchSize: number,
+    fn: (item: T) => Promise<void>,
+  ): Promise<void> {
+    for (let i = 0; i < items.length; i += batchSize) {
+      await Promise.all(items.slice(i, i + batchSize).map(fn));
+    }
+  }
+
   if (!dry_run) {
-    for (const result of results) {
-      // Write health score back to every account
+    // Write health scores — 25 parallel updates per batch instead of sequential
+    await batchAll(results, 25, async (result) => {
       try {
         await salesforceService.updateRecord('Account', result.id, {
-          Health_Score__c:    result.newScore,
-          Health_Tier__c:     result.newTier,
+          Health_Score__c:      result.newScore,
+          Health_Tier__c:       result.newTier,
           Health_Score_Date__c: today,
         });
         scoresWritten++;
       } catch (err) {
         writeErrors.push(`Score write failed for ${result.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
+    });
 
-      // Create Task for AM when tier drops — one per account
-      if (result.dropped) {
-        try {
-          const taskSubject = `⚠️ Prophet Alert: ${result.name} dropped to ${result.newTier}`;
-          const taskDesc = [
-            `Prophet Nightly Health Scan — ${today}`,
-            ``,
-            `Account: ${result.name}`,
-            `Previous Tier: ${result.oldTier ?? 'Unknown'}`,
-            `New Tier: ${result.newTier}`,
-            `Health Score: ${result.newScore}/100`,
-            result.riskFactors.length > 0
-              ? `Risk Factors:\n${result.riskFactors.map(f => `  - ${f}`).join('\n')}`
-              : '',
-            ``,
-            `Recommended action: Review account health and schedule a call with the client before this escalates further.`,
-            result.newTier === 'Critical'
-              ? `\n🚨 CRITICAL: This account needs immediate attention. Contact the client this week.`
-              : '',
-          ].filter(Boolean).join('\n');
+    // Create Tasks for tier drops — also batched in parallel
+    const tierDropResults = results.filter(r => r.dropped);
+    await batchAll(tierDropResults, 10, async (result) => {
+      try {
+        const taskSubject = `⚠️ Prophet Alert: ${result.name} dropped to ${result.newTier}`;
+        const taskDesc = [
+          `Prophet Nightly Health Scan — ${today}`,
+          ``,
+          `Account: ${result.name}`,
+          `Previous Tier: ${result.oldTier ?? 'Unknown'}`,
+          `New Tier: ${result.newTier}`,
+          `Health Score: ${result.newScore}/100`,
+          result.riskFactors.length > 0
+            ? `Risk Factors:\n${result.riskFactors.map(f => `  - ${f}`).join('\n')}`
+            : '',
+          ``,
+          `Recommended action: Review account health and schedule a call with the client before this escalates further.`,
+          result.newTier === 'Critical'
+            ? `\n🚨 CRITICAL: This account needs immediate attention. Contact the client this week.`
+            : '',
+        ].filter(Boolean).join('\n');
 
-          await salesforceService.createRecord('Task', {
-            Subject:      taskSubject,
-            Description:  taskDesc,
-            WhatId:       result.id,
-            OwnerId:      result.amId || undefined,
-            Status:       'Not Started',
-            Priority:     result.newTier === 'Critical' ? 'High' : 'Normal',
-            ActivityDate: today,
-          });
-          tasksCreated++;
-        } catch (err) {
-          writeErrors.push(`Task create failed for ${result.name}: ${err instanceof Error ? err.message : String(err)}`);
-        }
+        await salesforceService.createRecord('Task', {
+          Subject:      taskSubject,
+          Description:  taskDesc,
+          WhatId:       result.id,
+          OwnerId:      result.amId || undefined,
+          Status:       'Not Started',
+          Priority:     result.newTier === 'Critical' ? 'High' : 'Normal',
+          ActivityDate: today,
+        });
+        tasksCreated++;
+      } catch (err) {
+        writeErrors.push(`Task create failed for ${result.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
-    }
+    });
 
     // ── Create one Task per AM for all their orphaned Zoom calls ─────────────
     // Group all orphaned activity by AM user ID
@@ -537,7 +549,7 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
       orphanByAm.get(r.amId)!.tasks.push(r);
     }
 
-    for (const [amId, group] of orphanByAm) {
+    await batchAll([...orphanByAm.entries()], 10, async ([amId, group]) => {
       const totalCount = group.calls.length + group.tasks.length;
       const taskSubject = `🔗 Prophet: ${totalCount} Zoom call${totalCount > 1 ? 's' : ''} not linked to any account — action required`;
 
@@ -591,8 +603,8 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
       } catch (err) {
         writeErrors.push(`Orphan Task create failed for ${group.amName}: ${err instanceof Error ? err.message : String(err)}`);
       }
-    }
-  }
+    });
+  } // end if (!dry_run)
 
   // ── Step 5: Build output ──────────────────────────────────────────────────
 
