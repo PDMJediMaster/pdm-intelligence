@@ -1335,9 +1335,10 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     lines.push('');
   }
 
-  // Health Score Breakdown
+  // Health Score Breakdown — debug: show raw task count so we can verify Railway deploy + data
+  const dbgTypes = tasks.slice(0, 5).map((t) => `[${t.Type ?? 'null'}|${t.ActivityDate ?? 'noDate'}|${(t.Subject ?? '').slice(0, 20)}]`).join(' ');
   lines.push(`## Health Score: ${healthScore.overall}/100 — ${healthScore.rating}`);
-  lines.push(`- Engagement (40%): ${healthScore.engagement}/100 — ${healthScore.breakdown.engagementDetails}`);
+  lines.push(`- Engagement (40%): ${healthScore.engagement}/100 — ${healthScore.breakdown.engagementDetails} (tasks90d=${tasks.length} | ${dbgTypes}`);
   lines.push(`- Case Health (30%): ${healthScore.cases}/100 — ${healthScore.breakdown.casesDetails}`);
   lines.push(`- Renewal (30%):     ${healthScore.renewal}/100 — ${healthScore.breakdown.renewalDetails}`);
   lines.push('');
