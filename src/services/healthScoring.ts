@@ -34,13 +34,18 @@ function scoreEngagement(
     return taskTime >= cutoff && taskTime <= now && !isProphetTask;
   });
 
-  // Infer type from Subject prefix when Type field is blank/null (common for logged emails)
+  // Infer type from Subject prefix when Type field is blank/null/generic.
+  // Salesforce logged emails often arrive with Type = null OR Type = 'Task' (generic fallback).
+  // 'Other' is also treated as unclassified so subject-based inference runs on it too.
+  const noMeaningfulType = (t: SalesforceTask) =>
+    !t.Type || t.Type === 'Task' || t.Type === 'Other';
+
   const calls    = recent.filter((t) =>
-    t.Type === 'Call'    || (!t.Type && /^call/i.test(t.Subject ?? '')));
+    t.Type === 'Call'    || (noMeaningfulType(t) && /^call/i.test(t.Subject ?? '')));
   const emails   = recent.filter((t) =>
-    t.Type === 'Email'   || (!t.Type && /^(email|re:|fwd:|fw:|meeting recap|call recap)/i.test(t.Subject ?? '')));
+    t.Type === 'Email'   || (noMeaningfulType(t) && /^(email|re:|fwd:|fw:|meeting recap|call recap)/i.test(t.Subject ?? '')));
   const meetings = recent.filter((t) =>
-    t.Type === 'Meeting' || (t.Type === 'Other' && /meet|zoom|video/i.test(t.Subject ?? '')));
+    t.Type === 'Meeting' || (noMeaningfulType(t) && /meet|zoom|video/i.test(t.Subject ?? '')));
 
   const callPts    = Math.min(calls.length    * ENGAGEMENT_SCORING.CALL_POINTS,    ENGAGEMENT_SCORING.CALL_MAX);
   const emailPts   = Math.min(emails.length   * ENGAGEMENT_SCORING.EMAIL_POINTS,   ENGAGEMENT_SCORING.EMAIL_MAX);

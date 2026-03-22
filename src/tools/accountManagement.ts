@@ -1259,11 +1259,14 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
   lines.push(...formatSentimentSection(sentiment));
   lines.push('');
 
-  // Key Contacts — deduplicate by name+email combo.
-  // Keeps Jace Hansen (hotmail) AND Jace Hansen (gmail) as separate contact methods.
-  // Removes true duplicates: same name AND same email (or both have no email).
+  // Key Contacts — deduplicate.
+  // Primary key: Salesforce record Id (catches same record appearing twice).
+  // Secondary key: name+email (catches true org duplicates with different Ids).
+  const seenContactIds  = new Set<string>();
   const seenContactKeys = new Set<string>();
   const uniqueContacts = contacts.filter((c) => {
+    if (seenContactIds.has(c.Id)) return false;
+    seenContactIds.add(c.Id);
     const key = `${c.Name.trim().toLowerCase()}|${(c.Email ?? '').toLowerCase()}`;
     if (seenContactKeys.has(key)) return false;
     seenContactKeys.add(key);
