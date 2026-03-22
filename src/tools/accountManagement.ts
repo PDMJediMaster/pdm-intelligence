@@ -670,8 +670,8 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
          OR WhatId IN (SELECT Id FROM Opportunity WHERE AccountId = '${id}')
          OR (WhoId IN (SELECT Id FROM Contact WHERE AccountId = '${id}') AND WhatId = null)
        )
-         AND ActivityDate >= ${since90}
-       ORDER BY ActivityDate DESC NULLS LAST
+         AND (ActivityDate >= ${since90} OR (ActivityDate = null AND CreatedDate >= ${since90}T00:00:00Z))
+       ORDER BY ActivityDate DESC NULLS LAST, CreatedDate DESC
        LIMIT 30`
     ),
 
