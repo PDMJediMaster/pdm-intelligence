@@ -1259,12 +1259,14 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
   lines.push(...formatSentimentSection(sentiment));
   lines.push('');
 
-  // Key Contacts — deduplicate by name (Salesforce sometimes creates duplicate Contact records)
-  const seenContactNames = new Set<string>();
+  // Key Contacts — deduplicate by name+email combo.
+  // Keeps Jace Hansen (hotmail) AND Jace Hansen (gmail) as separate contact methods.
+  // Removes true duplicates: same name AND same email (or both have no email).
+  const seenContactKeys = new Set<string>();
   const uniqueContacts = contacts.filter((c) => {
-    const key = c.Name.trim().toLowerCase();
-    if (seenContactNames.has(key)) return false;
-    seenContactNames.add(key);
+    const key = `${c.Name.trim().toLowerCase()}|${(c.Email ?? '').toLowerCase()}`;
+    if (seenContactKeys.has(key)) return false;
+    seenContactKeys.add(key);
     return true;
   });
 
