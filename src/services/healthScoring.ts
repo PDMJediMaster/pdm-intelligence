@@ -22,13 +22,21 @@ function scoreEngagement(
   daysBack = ENGAGEMENT_SCORING.LOOKBACK_DAYS
 ): { score: number; details: string } {
   const cutoff = Date.now() - daysBack * 86_400_000;
-  const recent = tasks.filter(
-    (t) => t.Status === 'Completed' && new Date(t.CreatedDate).getTime() >= cutoff
-  );
+  // Use ActivityDate as the primary interaction date (not CreatedDate).
+  // SF email tasks are often logged with Type = null and "Email:" in Subject — count those too.
+  const recent = tasks.filter((t) => {
+    const dateStr = t.ActivityDate ?? t.CreatedDate?.split('T')[0];
+    if (!dateStr) return false;
+    return new Date(dateStr).getTime() >= cutoff && t.Status !== 'Open' && t.Status !== 'Not Started';
+  });
 
-  const calls    = recent.filter((t) => t.Type === 'Call');
-  const emails   = recent.filter((t) => t.Type === 'Email');
-  const meetings = recent.filter((t) => t.Type === 'Meeting');
+  // Infer type from Subject prefix when Type field is blank/null
+  const calls    = recent.filter((t) =>
+    t.Type === 'Call'    || (!t.Type && /^call/i.test(t.Subject ?? '')));
+  const emails   = recent.filter((t) =>
+    t.Type === 'Email'   || (!t.Type && /^(email|re:|fwd:|fw:)/i.test(t.Subject ?? '')));
+  const meetings = recent.filter((t) =>
+    t.Type === 'Meeting' || (t.Type === 'Other' && /meet|zoom|video/i.test(t.Subject ?? '')));
 
   const callPts    = Math.min(calls.length    * ENGAGEMENT_SCORING.CALL_POINTS,    ENGAGEMENT_SCORING.CALL_MAX);
   const emailPts   = Math.min(emails.length   * ENGAGEMENT_SCORING.EMAIL_POINTS,   ENGAGEMENT_SCORING.EMAIL_MAX);

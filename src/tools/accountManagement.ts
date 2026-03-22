@@ -921,7 +921,13 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
   lines.push(`- **Last Contact:** ${lastContactDays !== null ? `${lastContactDays} days ago` : 'Never'}`);
   lines.push(`- **Doctor Last Contacted:** ${doctorContactDays !== null ? `${doctorContactDays} days ago` : 'Not recorded'}`);
   if (accountRaw.Next_Alignment_Call__c) {
-    lines.push(`- **Next Alignment Call:** ${accountRaw.Next_Alignment_Call__c}`);
+    const alignmentDays = daysUntil(accountRaw.Next_Alignment_Call__c);
+    const alignmentFlag = alignmentDays !== null && alignmentDays < 0
+      ? ` ⚠️ OVERDUE by ${Math.abs(alignmentDays)}d`
+      : alignmentDays !== null && alignmentDays <= 7
+        ? ` 📅 in ${alignmentDays}d`
+        : '';
+    lines.push(`- **Next Alignment Call:** ${accountRaw.Next_Alignment_Call__c}${alignmentFlag}`);
   }
   if (accountRaw.Engagement_Status__c) {
     lines.push(`- **Engagement Status:** ${accountRaw.Engagement_Status__c}`);
@@ -1253,12 +1259,20 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
   lines.push(...formatSentimentSection(sentiment));
   lines.push('');
 
-  // Key Contacts
+  // Key Contacts — deduplicate by name (Salesforce sometimes creates duplicate Contact records)
+  const seenContactNames = new Set<string>();
+  const uniqueContacts = contacts.filter((c) => {
+    const key = c.Name.trim().toLowerCase();
+    if (seenContactNames.has(key)) return false;
+    seenContactNames.add(key);
+    return true;
+  });
+
   lines.push('## Key Contacts');
-  if (contacts.length === 0) {
+  if (uniqueContacts.length === 0) {
     lines.push('No active contacts on record.');
   } else {
-    for (const c of contacts) {
+    for (const c of uniqueContacts) {
       const role   = c.Contact_Type__c ?? (c.Doctor__c ? 'Doctor' : c.Title ?? '');
       const badges = [
         c.Doctor__c          ? '🩺 Doctor'          : '',
