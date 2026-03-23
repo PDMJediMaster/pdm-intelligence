@@ -341,6 +341,25 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
       riskFactors.push('Flagged for attention');
     }
 
+    // Status__c is a direct churn signal — force inclusion for terminal-adjacent statuses
+    const status = account.Status__c ?? '';
+    const isNonRenewing = status === 'Non Renewing';
+    const isPaused      = status === 'Paused';
+    const isDelinquent  = status === 'Delinquent';
+
+    if (isNonRenewing) {
+      score = Math.max(0, score - 40);
+      riskFactors.push('🚨 Status: Non Renewing');
+    }
+    if (isPaused) {
+      score = Math.max(0, score - 30);
+      riskFactors.push('⏸️ Status: Paused');
+    }
+    if (isDelinquent) {
+      score = Math.max(0, score - 30);
+      riskFactors.push('💸 Status: Delinquent');
+    }
+
     const hasRefundRequest = refundAccountIds.has(account.Id);
     const hasCancelOrder   = cancelOrderAccountIds.has(account.Id);
 
@@ -353,7 +372,8 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
       riskFactors.push('Open cancellation/pause change order');
     }
 
-    if (score <= threshold || hasRefundRequest || hasCancelOrder) {
+    const isStatusRisk = isNonRenewing || isPaused || isDelinquent;
+    if (score <= threshold || hasRefundRequest || hasCancelOrder || isStatusRisk) {
       const ownerName = (account.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown';
       scored.push({
         accountId:   account.Id,
@@ -369,11 +389,14 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
     }
   }
 
-  // Sort: refund requests and cancel orders first (priority override), then by score ascending
+  // Sort: refund requests and cancel orders first, then Non Renewing/Paused/Delinquent, then by score ascending
   scored.sort((a, b) => {
-    const aPriority = (a.hasRefundRequest || a.hasCancelOrder) ? 0 : 1;
-    const bPriority = (b.hasRefundRequest || b.hasCancelOrder) ? 0 : 1;
-    if (aPriority !== bPriority) return aPriority - bPriority;
+    const priority = (e: typeof scored[0]) =>
+      (e.hasRefundRequest || e.hasCancelOrder) ? 0 :
+      e.riskFactors.some((f) => f.includes('Non Renewing') || f.includes('Paused') || f.includes('Delinquent')) ? 1 :
+      2;
+    const pa = priority(a), pb = priority(b);
+    if (pa !== pb) return pa - pb;
     return a.score - b.score;
   });
 
