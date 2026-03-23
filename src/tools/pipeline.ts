@@ -181,6 +181,7 @@ async function handleUpsellOpportunities(rawArgs: unknown): Promise<string> {
     `# Upsell Opportunities${targetProduct ? ` — ${targetProduct}` : ''}`,
     `${results.length} account(s) identified | Showing top ${displayed.length}`,
     `Generated: ${new Date().toLocaleString()}`,
+    `*[DEBUG] allProductData entries: ${allProductData.length} | accountProducts map size: ${accountProducts.size}*`,
     '',
   ];
 
