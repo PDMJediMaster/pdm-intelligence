@@ -41,9 +41,8 @@ export const pipelineTools: Tool[] = [
       properties: {
         product: {
           type: 'string',
-          enum: DETECTABLE_PRODUCTS,
-          description: 'Filter to accounts missing this specific product (optional). ' +
-            'Limited to products detectable from Salesforce data (PPC, SEO, Social Media, TCI Mentorship).',
+          enum: PDM_PRODUCT_LIST,
+          description: 'Filter to accounts missing this specific product (optional)',
         },
         limit: {
           type: 'number',
@@ -160,7 +159,7 @@ async function handleUpsellOpportunities(rawArgs: unknown): Promise<string> {
     // not actionable upsell targets. Count them for the summary line.
     if (current.length === 0) { noProductDataCount++; continue; }
 
-    const missing = DETECTABLE_PRODUCTS.filter((p) => !current.includes(p));
+    const missing = PDM_PRODUCT_LIST.filter((p) => !current.includes(p));
     if (missing.length === 0) continue;
     if (targetProduct && !missing.includes(targetProduct as PDMProduct)) continue;
 
@@ -208,15 +207,22 @@ async function handleUpsellOpportunities(rawArgs: unknown): Promise<string> {
       ? ` (${pricing.notes})`
       : '';
 
+    const RESEARCH_PRODUCTS: PDMProduct[] = ['Web Development', 'Video & Photography', 'Traditional Media'];
+    const researchGaps = r.missing.filter((p) => RESEARCH_PRODUCTS.includes(p as PDMProduct));
+    const confirmedGaps = r.missing.filter((p) => !RESEARCH_PRODUCTS.includes(p as PDMProduct));
+
     const mrrStr = r.mrr ? `$${r.mrr.toLocaleString()}/mo` : 'MRR unknown';
     lines.push(`### ${r.accountName}`);
     lines.push(`**Owner:** ${r.ownerName} | **MRR:** ${mrrStr} | **ID:** ${r.accountId}`);
     lines.push(
       `**Current products (${r.current.length}):** ${r.current.length > 0 ? r.current.join(', ') : 'None recorded'}`
     );
-    lines.push(
-      `**Missing:** ${r.missing.slice(0, 4).join(', ')}${r.missing.length > 4 ? `, +${r.missing.length - 4} more` : ''}${pricingNote}`
-    );
+    if (confirmedGaps.length > 0) {
+      lines.push(`**Confirmed gaps:** ${confirmedGaps.join(', ')}${pricingNote}`);
+    }
+    if (researchGaps.length > 0) {
+      lines.push(`**Research recommended:** ${researchGaps.join(', ')} — run \`sf_research_prospect\` to audit website, video presence, and competitive gap`);
+    }
     lines.push(`**Why:** ${r.reason}`);
     lines.push('');
   }
