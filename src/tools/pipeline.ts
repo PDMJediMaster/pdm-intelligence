@@ -159,7 +159,10 @@ async function handleUpsellOpportunities(rawArgs: unknown): Promise<string> {
     // not actionable upsell targets. Count them for the summary line.
     if (current.length === 0) { noProductDataCount++; continue; }
 
-    const missing = PDM_PRODUCT_LIST.filter((p) => !current.includes(p));
+    // TCI Events = ticket sales, not recurring service gaps — exclude from upsell analysis
+    const missing = PDM_PRODUCT_LIST.filter(
+      (p) => !current.includes(p) && p !== 'TCI Events'
+    );
     if (missing.length === 0) continue;
     if (targetProduct && !missing.includes(targetProduct as PDMProduct)) continue;
 
