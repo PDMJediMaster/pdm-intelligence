@@ -129,6 +129,7 @@ class SalesforceService {
              LastActivityDate, Management_Fee__c, Contract_End_Date__c
       FROM Account
       WHERE Status__c = 'Active'
+        AND Name NOT LIKE '%Test%' AND Name NOT LIKE '%test%' AND Name != 'House of Mouse'
       ORDER BY Name
       LIMIT ${limit}
     `);
@@ -142,6 +143,7 @@ class SalesforceService {
              LastActivityDate, Contract_End_Date__c
       FROM Account
       WHERE Status__c = 'Active'
+        AND Name NOT LIKE '%Test%' AND Name NOT LIKE '%test%' AND Name != 'House of Mouse'
         AND (LastActivityDate = null OR LastActivityDate < ${cutoff})
       ORDER BY LastActivityDate ASC NULLS FIRST
       LIMIT ${limit}
@@ -243,6 +245,7 @@ class SalesforceService {
       WHERE Status__c NOT IN ('Cancelled','Inactive','Expired')
         AND Status__c != null
         AND OwnerId != '005PU000001eUQDYA2'
+        AND Name NOT LIKE '%Test%' AND Name NOT LIKE '%test%' AND Name != 'House of Mouse'
       LIMIT 5000
     `);
 

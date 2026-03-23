@@ -21,10 +21,18 @@ const INACTIVE_STATUS_SOQL = INACTIVE_STATUS_VALUES.map((s) => `'${s}'`).join(',
  * Excludes: terminal statuses (Cancelled/Inactive/Expired) AND null status (TCI ticket buyers /
  * converted leads that never became clients). Always combine with OwnerId != WILLIAM_SUMMERS.
  *
- * Usage: `WHERE ${ACTIVE_CLIENT_FILTER} AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'`
+ * Usage: `WHERE ${ACTIVE_CLIENT_FILTER} AND ${NOISE_ACCOUNT_FILTER} AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'`
  */
 export const ACTIVE_CLIENT_FILTER =
   `Status__c NOT IN (${INACTIVE_STATUS_SOQL}) AND Status__c != null`;
+
+/**
+ * Filters out known test and noise accounts from bulk operational queries.
+ * Applies to: churn risk, upsell, renewal pipeline, weekly synopsis, nightly scan.
+ * Does NOT apply to per-account lookups (pre-call brief, health report).
+ */
+export const NOISE_ACCOUNT_FILTER =
+  `Name NOT LIKE '%Test%' AND Name NOT LIKE '%test%' AND Name != 'House of Mouse'`;
 
 // ─── Tool Definitions ─────────────────────────────────────────────────────
 
@@ -274,6 +282,7 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
               Next_Alignment_Call__c
        FROM Account
        WHERE ${ACTIVE_CLIENT_FILTER}
+         AND ${NOISE_ACCOUNT_FILTER}
          AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
          ${ownerFilter}
          AND IsDeleted = false

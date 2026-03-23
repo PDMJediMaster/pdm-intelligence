@@ -247,6 +247,7 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
        WHERE Contract_Renewal_Date__c >= TODAY
          AND Contract_Renewal_Date__c <= ${in30Days}
          AND ${ACTIVE_CLIENT_FILTER}
+         AND Name NOT LIKE '%Test%' AND Name NOT LIKE '%test%' AND Name != 'House of Mouse'
          AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
          ${ownerFilterAcc}
        ORDER BY Contract_Renewal_Date__c ASC
