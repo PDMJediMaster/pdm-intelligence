@@ -127,15 +127,7 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
     Upsell_Opportunity__c?: string; Engagement_Status__c?: string;
   }
 
-  interface SignedSalesOrder {
-    Has_One_Time_Order_Form__c: boolean;
-    Has_Recurring_Order_Form__c: boolean;
-    Has_Recurring_Web_Hosting_Order_Form__c: boolean;
-    Has_TCI_Events_Order_Form__c: boolean;
-    Has_TCI_Mentorship_Order_Form__c: boolean;
-  }
-
-  const [accountRaw, tasks, openCases, opportunities, signedOrders] = await Promise.all([
+  const [accountRaw, tasks, openCases, opportunities, wonOpps, lineItems] = await Promise.all([
     salesforceService.rawQuery<HealthAccount>(
       `SELECT Id, Name, Status__c, TCI_Status__c, OwnerId, Owner.Name,
               Total_Monthly_Recurring_Amount__c, Tier__c,
@@ -149,15 +141,8 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
     salesforceService.getRecentTasks(id, 30),
     salesforceService.getCases(id, { openOnly: true }),
     salesforceService.getOpportunities(id, { isClosed: false }),
-    salesforceService.rawQuery<SignedSalesOrder & { Status__c?: string; Name?: string }>(
-      `SELECT Has_One_Time_Order_Form__c, Has_Recurring_Order_Form__c,
-              Has_Recurring_Web_Hosting_Order_Form__c,
-              Has_TCI_Events_Order_Form__c, Has_TCI_Mentorship_Order_Form__c,
-              Status__c, Name
-       FROM SalesOrder__c
-       WHERE AccountId__c = '${id}'
-       LIMIT 10`
-    ).catch(() => [] as (SignedSalesOrder & { Status__c?: string; Name?: string })[]),
+    salesforceService.getOpportunities(id, { isWon: true, limit: 20 }),
+    salesforceService.getOpportunityLineItems(id),
   ]);
 
   if (!accountRaw) throw new Error(`Account not found: ${id}`);
@@ -169,16 +154,11 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
     accountRaw.Contract_End_Date__c
   );
 
-  // Map Sales Orders to active PDM products (DEBUG: no status filter)
-  const productNames: string[] = [];
-  const debugOrders = (signedOrders as (SignedSalesOrder & { Status__c?: string; Name?: string })[]);
-  for (const o of debugOrders) {
-    if (o.Has_Recurring_Order_Form__c) { productNames.push('PPC', 'SEO', 'Social Media'); }
-    if (o.Has_One_Time_Order_Form__c || o.Has_Recurring_Web_Hosting_Order_Form__c) productNames.push('Web Development');
-    if (o.Has_TCI_Events_Order_Form__c)    productNames.push('TCI Events');
-    if (o.Has_TCI_Mentorship_Order_Form__c) productNames.push('TCI Mentorship');
-  }
-  const activeProducts = detectProducts(productNames);
+  const rawProductNames = [
+    ...lineItems.map((li) => li.Product2?.Name ?? li.Name ?? ''),
+    ...wonOpps.map((o) => o.Name),
+  ];
+  const activeProducts = detectProducts(rawProductNames);
 
   const ownerName = (accountRaw.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown';
   const mrr = accountRaw.Total_Monthly_Recurring_Amount__c
@@ -227,7 +207,6 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
     `*${healthScore.breakdown.renewalDetails}*`,
     '',
     '## Active PDM Products',
-    `*[DEBUG] Sales Orders found: ${debugOrders.length} — ${debugOrders.map(o => `${o.Name ?? 'unnamed'} (${o.Status__c ?? 'no status'})`).join(', ') || 'none'}*`,
   );
 
   if (activeProducts.length > 0) {
