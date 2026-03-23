@@ -32,7 +32,7 @@ export const ACTIVE_CLIENT_FILTER =
  * Does NOT apply to per-account lookups (pre-call brief, health report).
  */
 export const NOISE_ACCOUNT_FILTER =
-  `Name NOT LIKE '%Test%' AND Name NOT LIKE '%test%' AND Name != 'House of Mouse'`;
+  `(NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'`;
 
 // ─── Tool Definitions ─────────────────────────────────────────────────────
 

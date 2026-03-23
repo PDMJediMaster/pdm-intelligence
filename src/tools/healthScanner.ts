@@ -133,7 +133,7 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
             Delinquent__c, Total_Monthly_Recurring_Amount__c
      FROM Account
      WHERE ${ACTIVE_CLIENT_FILTER}
-       AND Name NOT LIKE '%Test%' AND Name NOT LIKE '%test%' AND Name != 'House of Mouse'
+       AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
        AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
      ORDER BY LastActivityDate ASC NULLS FIRST
      LIMIT ${limit}`
@@ -666,7 +666,7 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
      FROM Account
      WHERE CreatedDate >= 2026-02-01T00:00:00Z
        AND ${ACTIVE_CLIENT_FILTER}
-       AND Name NOT LIKE '%Test%' AND Name NOT LIKE '%test%' AND Name != 'House of Mouse'
+       AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
        AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
        AND Id NOT IN (SELECT Account__c FROM Client_Onboarding__c WHERE Account__c != null)
      ORDER BY CreatedDate DESC
