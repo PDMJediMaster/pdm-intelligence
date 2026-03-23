@@ -14,6 +14,16 @@ export const PDM_PRODUCTS = {
 export type PDMProduct = (typeof PDM_PRODUCTS)[keyof typeof PDM_PRODUCTS];
 export const PDM_PRODUCT_LIST: PDMProduct[] = Object.values(PDM_PRODUCTS);
 
+// Products we can reliably detect from Salesforce data (budget fields + TCI flags).
+// Phase 1 one-time services (Web Development, Video, Traditional Media) and
+// TCI Events are excluded — no budget field tracks whether an account has them.
+export const DETECTABLE_PRODUCTS: PDMProduct[] = [
+  PDM_PRODUCTS.PPC,
+  PDM_PRODUCTS.SEO,
+  PDM_PRODUCTS.SOCIAL_MEDIA,
+  PDM_PRODUCTS.TCI_MENTORSHIP,
+];
+
 export const PDM_PRODUCT_PRICING: Record<PDMProduct, { monthly?: number; notes: string }> = {
   [PDM_PRODUCTS.WEB_DEVELOPMENT]:   { notes: 'Custom pricing' },
   [PDM_PRODUCTS.VIDEO_PHOTOGRAPHY]: { notes: 'Custom pricing' },

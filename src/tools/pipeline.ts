@@ -4,6 +4,7 @@ import { salesforceService } from '../services/salesforce.js';
 import { detectProducts } from '../services/healthScoring.js';
 import {
   DEFAULT_RENEWAL_DAYS,
+  DETECTABLE_PRODUCTS,
   PDM_PRODUCT_LIST,
   PDM_PRODUCT_PRICING,
 } from '../constants.js';
@@ -40,8 +41,9 @@ export const pipelineTools: Tool[] = [
       properties: {
         product: {
           type: 'string',
-          enum: PDM_PRODUCT_LIST,
-          description: 'Filter to accounts missing this specific product (optional)',
+          enum: DETECTABLE_PRODUCTS,
+          description: 'Filter to accounts missing this specific product (optional). ' +
+            'Limited to products detectable from Salesforce data (PPC, SEO, Social Media, TCI Mentorship).',
         },
         limit: {
           type: 'number',
@@ -158,7 +160,7 @@ async function handleUpsellOpportunities(rawArgs: unknown): Promise<string> {
     // not actionable upsell targets. Count them for the summary line.
     if (current.length === 0) { noProductDataCount++; continue; }
 
-    const missing = PDM_PRODUCT_LIST.filter((p) => !current.includes(p));
+    const missing = DETECTABLE_PRODUCTS.filter((p) => !current.includes(p));
     if (missing.length === 0) continue;
     if (targetProduct && !missing.includes(targetProduct as PDMProduct)) continue;
 
