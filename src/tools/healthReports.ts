@@ -278,7 +278,7 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
          ${ownerFilter}
          AND IsDeleted = false
        ORDER BY LastActivityDate ASC NULLS FIRST
-       LIMIT ${limit * 4}`
+       LIMIT 5000`
     ),
 
     salesforceService.rawQuery<SalesforceRefundRequest>(
