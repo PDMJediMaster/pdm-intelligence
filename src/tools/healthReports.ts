@@ -118,6 +118,7 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
   // Enriched account query
   interface HealthAccount {
     Id: string; Name: string; Status__c?: string; TCI_Status__c?: string;
+    TCI_Enrolled__c?: boolean;
     OwnerId: string; Owner?: { Name: string };
     Total_Monthly_Recurring_Amount__c?: number; Tier__c?: string;
     Contract_End_Date__c?: string; Contract_Renewal_Date__c?: string;
@@ -125,24 +126,24 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
     Delinquent__c?: boolean; Flagged_Status__c?: boolean;
     Cancellation_or_Pause_Request_Date__c?: string;
     Upsell_Opportunity__c?: string; Engagement_Status__c?: string;
+    Budget__c?: number; SEO_Budget__c?: number; Social_Budget__c?: number;
   }
 
-  const [accountRaw, tasks, openCases, opportunities, wonOpps, lineItems] = await Promise.all([
+  const [accountRaw, tasks, openCases, opportunities] = await Promise.all([
     salesforceService.rawQuery<HealthAccount>(
-      `SELECT Id, Name, Status__c, TCI_Status__c, OwnerId, Owner.Name,
+      `SELECT Id, Name, Status__c, TCI_Status__c, TCI_Enrolled__c, OwnerId, Owner.Name,
               Total_Monthly_Recurring_Amount__c, Tier__c,
               Contract_End_Date__c, Contract_Renewal_Date__c,
               LastActivityDate, Next_Alignment_Call__c,
               Delinquent__c, Flagged_Status__c,
               Cancellation_or_Pause_Request_Date__c,
-              Upsell_Opportunity__c, Engagement_Status__c
+              Upsell_Opportunity__c, Engagement_Status__c,
+              Budget__c, SEO_Budget__c, Social_Budget__c
        FROM Account WHERE Id = '${id}'`
     ).then((r) => r[0]),
     salesforceService.getRecentTasks(id, 30),
     salesforceService.getCases(id, { openOnly: true }),
     salesforceService.getOpportunities(id, { isClosed: false }),
-    salesforceService.getOpportunities(id, { isWon: true, limit: 20 }),
-    salesforceService.getOpportunityLineItems(id),
   ]);
 
   if (!accountRaw) throw new Error(`Account not found: ${id}`);
@@ -154,11 +155,16 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
     accountRaw.Contract_End_Date__c
   );
 
-  const rawProductNames = [
-    ...lineItems.map((li) => li.Product2?.Name ?? li.Name ?? ''),
-    ...wonOpps.map((o) => o.Name),
-  ];
-  const activeProducts = detectProducts(rawProductNames);
+  // Detect active products from budget fields (reliable for all accounts).
+  // Only flag Phase 2 services when Status = Active AND budget > 0.
+  const isActive = accountRaw.Status__c === 'Active';
+  const productNames: string[] = [];
+  if (isActive && (accountRaw.Budget__c ?? 0) > 0)        productNames.push('PPC');
+  if (isActive && (accountRaw.SEO_Budget__c ?? 0) > 0)    productNames.push('SEO');
+  if (isActive && (accountRaw.Social_Budget__c ?? 0) > 0) productNames.push('Social Media');
+  if (accountRaw.TCI_Status__c === 'Member' || accountRaw.TCI_Enrolled__c)
+    productNames.push('TCI Mentorship');
+  const activeProducts = detectProducts(productNames);
 
   const ownerName = (accountRaw.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown';
   const mrr = accountRaw.Total_Monthly_Recurring_Amount__c

@@ -221,29 +221,43 @@ class SalesforceService {
   async getAllActiveAccountProducts(): Promise<
     { accountId: string; productName: string }[]
   > {
-    // Sales Orders are not fully populated for existing clients — use Closed Won
-    // Opportunity Line Items as the reliable product source. The signing flow
-    // (DocuSign → Sales Order Signed → Flow → Opportunity Closed Won) means
-    // Closed Won Opps + their Line Items represent confirmed active products.
-    // Filter: all operational account statuses (exclude terminal + null).
-    const records = await this.query<{
-      Opportunity: { AccountId: string };
-      Product2: { Name: string };
-      Name: string;
+    // Budget fields on Account are the most reliable product signal.
+    // Budget__c > 0 = PPC active, SEO_Budget__c > 0 = SEO active, etc.
+    // Works for all accounts including legacy ones with no Opportunities or Sales Orders.
+    // Only Status__c = 'Active' confirms services are currently running.
+    // Budget fields on paused/non-renewing accounts may still be populated
+    // from prior service periods — those shouldn't count as active products.
+    // TCI Mentorship uses TCI_Status__c and is independent of marketing status.
+    const accounts = await this.query<{
+      Id: string;
+      Status__c?: string;
+      Budget__c?: number;
+      SEO_Budget__c?: number;
+      Social_Budget__c?: number;
+      TCI_Status__c?: string;
+      TCI_Enrolled__c?: boolean;
     }>(`
-      SELECT Opportunity.AccountId, Product2.Name, Name
-      FROM OpportunityLineItem
-      WHERE Opportunity.IsWon = true
-        AND Opportunity.Account.Status__c NOT IN ('Cancelled','Inactive','Expired')
-        AND Opportunity.Account.Status__c != null
-        AND Opportunity.Account.OwnerId != '005PU000001eUQDYA2'
+      SELECT Id, Status__c, Budget__c, SEO_Budget__c, Social_Budget__c,
+             TCI_Status__c, TCI_Enrolled__c
+      FROM Account
+      WHERE Status__c NOT IN ('Cancelled','Inactive','Expired')
+        AND Status__c != null
+        AND OwnerId != '005PU000001eUQDYA2'
       LIMIT 5000
     `);
 
-    return records.map((r) => ({
-      accountId: r.Opportunity?.AccountId ?? '',
-      productName: r.Product2?.Name ?? r.Name ?? '',
-    }));
+    const results: { accountId: string; productName: string }[] = [];
+    for (const a of accounts) {
+      const isActive = a.Status__c === 'Active';
+      // Phase 2 services: only count when account is Active AND budget is set
+      if (isActive && (a.Budget__c ?? 0) > 0)        results.push({ accountId: a.Id, productName: 'PPC' });
+      if (isActive && (a.SEO_Budget__c ?? 0) > 0)    results.push({ accountId: a.Id, productName: 'SEO' });
+      if (isActive && (a.Social_Budget__c ?? 0) > 0) results.push({ accountId: a.Id, productName: 'Social Media' });
+      // TCI Mentorship: independent of marketing status
+      if (a.TCI_Status__c === 'Member' || a.TCI_Enrolled__c)
+        results.push({ accountId: a.Id, productName: 'TCI Mentorship' });
+    }
+    return results;
   }
 
   // ─── Cases ────────────────────────────────────────────────────────────
