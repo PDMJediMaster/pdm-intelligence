@@ -221,22 +221,50 @@ class SalesforceService {
   async getAllActiveAccountProducts(): Promise<
     { accountId: string; productName: string }[]
   > {
+    // Query Signed Sales Orders — these represent active service contracts.
+    // Use checkbox fields to map order types to PDM product categories.
+    // Status__c = 'Signed' means the contract is active and services are live.
     const records = await this.query<{
-      Opportunity: { AccountId: string };
-      Product2: { Name: string };
-      Name: string;
+      AccountId__c: string;
+      Has_One_Time_Order_Form__c: boolean;
+      Has_Recurring_Order_Form__c: boolean;
+      Has_Recurring_Web_Hosting_Order_Form__c: boolean;
+      Has_TCI_Events_Order_Form__c: boolean;
+      Has_TCI_Mentorship_Order_Form__c: boolean;
+      Sales_Order_Type__c?: string;
     }>(`
-      SELECT Opportunity.AccountId, Product2.Name, Name
-      FROM OpportunityLineItem
-      WHERE Opportunity.IsWon = true
-        AND Opportunity.Account.Status__c = 'Active'
+      SELECT AccountId__c,
+             Has_One_Time_Order_Form__c, Has_Recurring_Order_Form__c,
+             Has_Recurring_Web_Hosting_Order_Form__c,
+             Has_TCI_Events_Order_Form__c, Has_TCI_Mentorship_Order_Form__c,
+             Sales_Order_Type__c
+      FROM Sales_Order__c
+      WHERE Status__c = 'Signed'
+        AND AccountId__c != null
       LIMIT 5000
     `);
 
-    return records.map((r) => ({
-      accountId: r.Opportunity?.AccountId ?? '',
-      productName: r.Product2?.Name ?? r.Name ?? '',
-    }));
+    // Expand each Sales Order record into one row per active product category.
+    // detectProducts() will then map these names to PDM_PRODUCT_LIST entries.
+    // Map Sales Order checkboxes directly to PDM product names.
+    // Has_Recurring_Order_Form__c covers all Phase 2 services (PPC/SEO/Social) as a bundle.
+    // Granular Phase 2 breakdown requires Opportunity Line Items (future enhancement).
+    const results: { accountId: string; productName: string }[] = [];
+    for (const r of records) {
+      const id = r.AccountId__c;
+      if (!id) continue;
+      if (r.Has_Recurring_Order_Form__c) {
+        // Phase 2 recurring — treat as PPC + SEO + Social (all included in recurring bundle)
+        results.push({ accountId: id, productName: 'PPC' });
+        results.push({ accountId: id, productName: 'SEO' });
+        results.push({ accountId: id, productName: 'Social Media' });
+      }
+      if (r.Has_One_Time_Order_Form__c)               results.push({ accountId: id, productName: 'Web Development' });
+      if (r.Has_Recurring_Web_Hosting_Order_Form__c)  results.push({ accountId: id, productName: 'Web Development' });
+      if (r.Has_TCI_Events_Order_Form__c)             results.push({ accountId: id, productName: 'TCI Events' });
+      if (r.Has_TCI_Mentorship_Order_Form__c)         results.push({ accountId: id, productName: 'TCI Mentorship' });
+    }
+    return results;
   }
 
   // ─── Cases ────────────────────────────────────────────────────────────

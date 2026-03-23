@@ -201,10 +201,20 @@ export function calculateHealthScore(
 
 // ─── Product Detection ────────────────────────────────────────────────────
 
-/** Match raw product/opportunity names from Salesforce to PDM product categories */
+/** Match raw product names from Salesforce to PDM product categories.
+ *  Supports two modes:
+ *  1. Exact match — when the caller passes a clean PDM product name (from Sales Order mapper)
+ *  2. Keyword match — fallback for raw Opportunity/Asset names that need fuzzy detection
+ */
 export function detectProducts(rawNames: string[]): string[] {
   const detected = new Set<string>();
   for (const raw of rawNames) {
+    // Exact match first (Sales Order mapper already returns clean names)
+    if (PDM_PRODUCT_LIST.includes(raw as PDMProduct)) {
+      detected.add(raw);
+      continue;
+    }
+    // Keyword fallback for legacy/raw Opportunity Line Item names
     const lower = raw.toLowerCase();
     for (const product of PDM_PRODUCT_LIST) {
       const keywords = PRODUCT_KEYWORDS[product as PDMProduct];
