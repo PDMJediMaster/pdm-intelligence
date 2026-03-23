@@ -1387,11 +1387,24 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
   lines.push('');
 
   // Recent Activity (full notes)
+  // Filter out Pardot marketing blasts — these are bulk automated emails, not AM engagement.
+  // Deduplicate email reply threads by Subject so each conversation appears once.
   lines.push('## Recent Activity (Last 90 Days)');
-  if (allTasks.length === 0) {
+  const seenActivityKeys = new Set<string>();
+  const displayTasks = allTasks.filter((t) => {
+    const subj = t.Subject ?? '';
+    if (subj.startsWith('Pardot List Email:')) return false;
+    // Collapse email reply chains: strip "Re:", "Fwd:", "Email:" prefixes to get the thread root
+    const threadKey = subj.replace(/^(Email:|Re:|Fwd?:|FW:)\s*/i, '').trim().toLowerCase();
+    if (seenActivityKeys.has(threadKey)) return false;
+    seenActivityKeys.add(threadKey);
+    return true;
+  });
+
+  if (displayTasks.length === 0) {
     lines.push('No recorded activity in the last 90 days.');
   } else {
-    for (const t of allTasks.slice(0, 10)) {
+    for (const t of displayTasks.slice(0, 10)) {
       const doctorBadge = t.Spoke_with_Doctor__c ? ' 🩺' : '';
       lines.push(
         `### [${t.ActivityDate ?? t.CreatedDate.split('T')[0]}] ${t.Type ?? 'Task'}: ${t.Subject}${doctorBadge}`
