@@ -230,11 +230,12 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
   }
 
   lines.push('');
-  lines.push(`## Recent Activity (30 days) — ${tasks.length} task(s)`);
-  for (const t of tasks.slice(0, 5)) {
+  const displayTasks = tasks.filter((t) => !t.Subject?.startsWith('Pardot List Email:'));
+  lines.push(`## Recent Activity (30 days) — ${displayTasks.length} task(s)`);
+  for (const t of displayTasks.slice(0, 5)) {
     lines.push(`- ${t.ActivityDate ?? t.CreatedDate.split('T')[0]}: ${t.Type ?? 'Task'} — ${t.Subject}`);
   }
-  if (tasks.length === 0) lines.push('No recorded activity in the last 30 days.');
+  if (displayTasks.length === 0) lines.push('No recorded activity in the last 30 days.');
 
   return lines.join('\n');
 }
