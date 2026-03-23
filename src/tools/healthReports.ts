@@ -149,14 +149,15 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
     salesforceService.getRecentTasks(id, 30),
     salesforceService.getCases(id, { openOnly: true }),
     salesforceService.getOpportunities(id, { isClosed: false }),
-    salesforceService.rawQuery<SignedSalesOrder>(
+    salesforceService.rawQuery<SignedSalesOrder & { Status__c?: string; Name?: string }>(
       `SELECT Has_One_Time_Order_Form__c, Has_Recurring_Order_Form__c,
               Has_Recurring_Web_Hosting_Order_Form__c,
-              Has_TCI_Events_Order_Form__c, Has_TCI_Mentorship_Order_Form__c
+              Has_TCI_Events_Order_Form__c, Has_TCI_Mentorship_Order_Form__c,
+              Status__c, Name
        FROM SalesOrder__c
-       WHERE AccountId__c = '${id}' AND Status__c = 'Signed'
+       WHERE AccountId__c = '${id}'
        LIMIT 10`
-    ).catch(() => [] as SignedSalesOrder[]),
+    ).catch(() => [] as (SignedSalesOrder & { Status__c?: string; Name?: string })[]),
   ]);
 
   if (!accountRaw) throw new Error(`Account not found: ${id}`);
@@ -168,9 +169,10 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
     accountRaw.Contract_End_Date__c
   );
 
-  // Map signed Sales Orders to active PDM products
+  // Map Sales Orders to active PDM products (DEBUG: no status filter)
   const productNames: string[] = [];
-  for (const o of signedOrders) {
+  const debugOrders = (signedOrders as (SignedSalesOrder & { Status__c?: string; Name?: string })[]);
+  for (const o of debugOrders) {
     if (o.Has_Recurring_Order_Form__c) { productNames.push('PPC', 'SEO', 'Social Media'); }
     if (o.Has_One_Time_Order_Form__c || o.Has_Recurring_Web_Hosting_Order_Form__c) productNames.push('Web Development');
     if (o.Has_TCI_Events_Order_Form__c)    productNames.push('TCI Events');
@@ -225,6 +227,7 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
     `*${healthScore.breakdown.renewalDetails}*`,
     '',
     '## Active PDM Products',
+    `*[DEBUG] Sales Orders found: ${debugOrders.length} — ${debugOrders.map(o => `${o.Name ?? 'unnamed'} (${o.Status__c ?? 'no status'})`).join(', ') || 'none'}*`,
   );
 
   if (activeProducts.length > 0) {
