@@ -144,17 +144,22 @@ async function handleUpsellOpportunities(rawArgs: unknown): Promise<string> {
     accountId:   string;
     accountName: string;
     ownerName:   string;
+    mrr?:        number;
     current:     string[];
     missing:     string[];
     reason:      string;
   }[] = [];
 
+  let noProductDataCount = 0;
   for (const account of activeAccounts) {
     const current = Array.from(accountProducts.get(account.Id) ?? []);
+
+    // Skip accounts with no product data — these are data gaps (no budget fields set),
+    // not actionable upsell targets. Count them for the summary line.
+    if (current.length === 0) { noProductDataCount++; continue; }
+
     const missing = PDM_PRODUCT_LIST.filter((p) => !current.includes(p));
-
     if (missing.length === 0) continue;
-
     if (targetProduct && !missing.includes(targetProduct as PDMProduct)) continue;
 
     const ownerName = (account.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown';
@@ -166,22 +171,23 @@ async function handleUpsellOpportunities(rawArgs: unknown): Promise<string> {
       accountId:   account.Id,
       accountName: account.Name,
       ownerName,
+      mrr:         account.Total_Monthly_Recurring_Amount__c,
       current,
       missing:     topMissing,
       reason:      buildUpsellReason(topMissing[0] as PDMProduct, account.TCI_Status__c),
     });
   }
 
-  // Sort: accounts with fewest current products first (most opportunity)
-  results.sort((a, b) => a.current.length - b.current.length);
+  // Sort by MRR descending — highest revenue accounts first
+  results.sort((a, b) => (b.mrr ?? 0) - (a.mrr ?? 0));
 
   const displayed = results.slice(0, limit);
 
   const lines: string[] = [
     `# Upsell Opportunities${targetProduct ? ` — ${targetProduct}` : ''}`,
-    `${results.length} account(s) identified | Showing top ${displayed.length}`,
+    `${results.length} account(s) with upsell gaps | Showing top ${displayed.length} by MRR`,
+    `*${noProductDataCount} additional accounts skipped — no budget data on file*`,
     `Generated: ${new Date().toLocaleString()}`,
-    `*[DEBUG] allProductData entries: ${allProductData.length} | accountProducts map size: ${accountProducts.size}*`,
     '',
   ];
 
@@ -200,8 +206,9 @@ async function handleUpsellOpportunities(rawArgs: unknown): Promise<string> {
       ? ` (${pricing.notes})`
       : '';
 
+    const mrrStr = r.mrr ? `$${r.mrr.toLocaleString()}/mo` : 'MRR unknown';
     lines.push(`### ${r.accountName}`);
-    lines.push(`**Owner:** ${r.ownerName} | **ID:** ${r.accountId}`);
+    lines.push(`**Owner:** ${r.ownerName} | **MRR:** ${mrrStr} | **ID:** ${r.accountId}`);
     lines.push(
       `**Current products (${r.current.length}):** ${r.current.length > 0 ? r.current.join(', ') : 'None recorded'}`
     );
