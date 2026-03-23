@@ -238,7 +238,7 @@ class SalesforceService {
              Has_Recurring_Web_Hosting_Order_Form__c,
              Has_TCI_Events_Order_Form__c, Has_TCI_Mentorship_Order_Form__c,
              Sales_Order_Type__c
-      FROM Sales_Order__c
+      FROM SalesOrder__c
       WHERE Status__c = 'Signed'
         AND AccountId__c != null
       LIMIT 5000

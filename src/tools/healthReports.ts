@@ -153,7 +153,7 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
       `SELECT Has_One_Time_Order_Form__c, Has_Recurring_Order_Form__c,
               Has_Recurring_Web_Hosting_Order_Form__c,
               Has_TCI_Events_Order_Form__c, Has_TCI_Mentorship_Order_Form__c
-       FROM Sales_Order__c
+       FROM SalesOrder__c
        WHERE AccountId__c = '${id}' AND Status__c = 'Signed'
        LIMIT 10`
     ).catch(() => [] as SignedSalesOrder[]),
