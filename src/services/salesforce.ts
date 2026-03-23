@@ -290,20 +290,37 @@ class SalesforceService {
   async getRecentTasks(accountId: string, daysBack = 30): Promise<SalesforceTask[]> {
     assertSfId(accountId, 'Account ID');
     const since = isoDate(-daysBack);
-    return this.query<SalesforceTask>(`
-      SELECT Id, WhatId, WhoId, OwnerId, Owner.Name, Subject, Description,
+    const fields = `Id, WhatId, WhoId, OwnerId, Owner.Name, Subject, Description,
              Status, Priority, ActivityDate, Type, CreatedDate,
-             CallType, CallDurationInSeconds
-      FROM Task
-      WHERE (
-        WhatId = '${accountId}'
-        OR WhatId IN (SELECT Id FROM Opportunity WHERE AccountId = '${accountId}')
-        OR (WhoId IN (SELECT Id FROM Contact WHERE AccountId = '${accountId}') AND WhatId = null)
-      )
-        AND CreatedDate >= ${since}T00:00:00Z
-      ORDER BY CreatedDate DESC
-      LIMIT 50
-    `);
+             CallType, CallDurationInSeconds`;
+    const dateFilter = `CreatedDate >= ${since}T00:00:00Z`;
+
+    // Salesforce SOQL does not allow semi-joins combined with OR.
+    // Run three separate queries and merge in code.
+    const [acctTasks, oppTasks, contactTasks] = await Promise.all([
+      this.query<SalesforceTask>(`
+        SELECT ${fields} FROM Task
+        WHERE WhatId = '${accountId}' AND ${dateFilter}
+        ORDER BY CreatedDate DESC LIMIT 50
+      `),
+      this.query<SalesforceTask>(`
+        SELECT ${fields} FROM Task
+        WHERE WhatId IN (SELECT Id FROM Opportunity WHERE AccountId = '${accountId}')
+          AND ${dateFilter}
+        ORDER BY CreatedDate DESC LIMIT 30
+      `).catch(() => [] as SalesforceTask[]),
+      this.query<SalesforceTask>(`
+        SELECT ${fields} FROM Task
+        WHERE WhoId IN (SELECT Id FROM Contact WHERE AccountId = '${accountId}')
+          AND WhatId = null AND ${dateFilter}
+        ORDER BY CreatedDate DESC LIMIT 30
+      `).catch(() => [] as SalesforceTask[]),
+    ]);
+
+    const seen = new Set<string>();
+    return [...acctTasks, ...oppTasks, ...contactTasks]
+      .filter((t) => { if (seen.has(t.Id)) return false; seen.add(t.Id); return true; })
+      .sort((a, b) => b.CreatedDate.localeCompare(a.CreatedDate));
   }
 
   async createTask(params: {

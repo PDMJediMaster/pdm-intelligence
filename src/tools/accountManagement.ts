@@ -615,7 +615,9 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     contacts,
     openCases,
     recentCases,
-    tasks,
+    tasksAccount,
+    tasksOpportunity,
+    tasksContact,
     opportunities,
     lineItems,
     assets,
@@ -658,6 +660,7 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
 
     salesforceService.getCases(id, { since: since90 }),
 
+    // Query 1: Tasks linked directly to the Account
     salesforceService.rawQuery<FullTask>(
       `SELECT Id, Subject, Description, Type, ActivityDate, CreatedDate, Status,
               Spoke_with_Doctor__c,
@@ -665,15 +668,40 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
               ZVC__Zoom_Meeting__r.ZVC__Meeting_AI_Summary__c,
               ZVC__Zoom_Meeting__r.ZVC__Meeting_Topic__c
        FROM Task
-       WHERE (
-         WhatId = '${id}'
-         OR WhatId IN (SELECT Id FROM Opportunity WHERE AccountId = '${id}')
-         OR (WhoId IN (SELECT Id FROM Contact WHERE AccountId = '${id}') AND WhatId = null)
-       )
+       WHERE WhatId = '${id}'
          AND (ActivityDate >= ${since90} OR (ActivityDate = null AND CreatedDate >= ${since90}T00:00:00Z))
        ORDER BY ActivityDate DESC NULLS LAST, CreatedDate DESC
        LIMIT 30`
     ),
+
+    // Query 2: Tasks linked to Opportunities on this Account (semi-join must be standalone)
+    salesforceService.rawQuery<FullTask>(
+      `SELECT Id, Subject, Description, Type, ActivityDate, CreatedDate, Status,
+              Spoke_with_Doctor__c,
+              ZVC__Zoom_Meeting__c,
+              ZVC__Zoom_Meeting__r.ZVC__Meeting_AI_Summary__c,
+              ZVC__Zoom_Meeting__r.ZVC__Meeting_Topic__c
+       FROM Task
+       WHERE WhatId IN (SELECT Id FROM Opportunity WHERE AccountId = '${id}')
+         AND (ActivityDate >= ${since90} OR (ActivityDate = null AND CreatedDate >= ${since90}T00:00:00Z))
+       ORDER BY ActivityDate DESC NULLS LAST, CreatedDate DESC
+       LIMIT 20`
+    ).catch(() => [] as FullTask[]),
+
+    // Query 3: Tasks linked to Contacts on this Account with no WhatId (Pardot/email logs)
+    salesforceService.rawQuery<FullTask>(
+      `SELECT Id, Subject, Description, Type, ActivityDate, CreatedDate, Status,
+              Spoke_with_Doctor__c,
+              ZVC__Zoom_Meeting__c,
+              ZVC__Zoom_Meeting__r.ZVC__Meeting_AI_Summary__c,
+              ZVC__Zoom_Meeting__r.ZVC__Meeting_Topic__c
+       FROM Task
+       WHERE WhoId IN (SELECT Id FROM Contact WHERE AccountId = '${id}')
+         AND WhatId = null
+         AND (ActivityDate >= ${since90} OR (ActivityDate = null AND CreatedDate >= ${since90}T00:00:00Z))
+       ORDER BY ActivityDate DESC NULLS LAST, CreatedDate DESC
+       LIMIT 20`
+    ).catch(() => [] as FullTask[]),
 
     salesforceService.getOpportunities(id, { isClosed: false }),
 
@@ -798,6 +826,19 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
 
   if (!accountRaw) throw new Error(`Account not found: ${id}`);
   resolvedName = accountRaw.Name;
+
+  // Merge the three task queries (Account-linked, Opportunity-linked, Contact-linked).
+  // Deduplicate by Id in case any task appears in multiple result sets.
+  const seenTaskIds = new Set<string>();
+  const tasks = [...tasksAccount, ...tasksOpportunity, ...tasksContact].filter((t) => {
+    if (seenTaskIds.has(t.Id)) return false;
+    seenTaskIds.add(t.Id);
+    return true;
+  }).sort((a, b) => {
+    const da = a.ActivityDate ?? a.CreatedDate?.split('T')[0] ?? '';
+    const db = b.ActivityDate ?? b.CreatedDate?.split('T')[0] ?? '';
+    return db.localeCompare(da);
+  });
 
   // Merge EmailMessage records into the tasks array as synthetic Task-like entries.
   // EmailMessage stores emails sent via Salesforce Send Email — these appear in the Activity
