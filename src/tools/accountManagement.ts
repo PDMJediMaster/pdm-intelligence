@@ -624,6 +624,7 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     assets,
     businessObjectives,
     refundRequests,
+    cancellationRequests,
     reassignments,
     zoomTasks,
     phoneCallTasks,
@@ -732,6 +733,28 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
        ORDER BY CreatedDate DESC
        LIMIT 5`
     ).catch(() => [] as SalesforceRefundRequest[]),
+
+    salesforceService.rawQuery<{
+      Id: string; Name: string; Status__c?: string;
+      Primary_Cancellation_Reason__c?: string; Cancellation_Type__c?: string;
+      Effective_Cancellation_Date__c?: string; Days_Until_Effective_Cancellation__c?: number;
+      Requested_Date__c?: string; Marketing_Cancellation_Date__c?: string;
+      Marketing_Cancellation_Scope__c?: string; TCI_Cancellation_Date__c?: string;
+      Save_Attempted__c?: boolean; Save_Outcome__c?: string;
+      Retention_Notes__c?: string; New_Agency_Name__c?: string;
+      Cancellation_Channel__c?: string; Detailed_Cancellation_Reason__c?: string;
+    }>(
+      `SELECT Id, Name, Status__c, Primary_Cancellation_Reason__c, Cancellation_Type__c,
+              Effective_Cancellation_Date__c, Days_Until_Effective_Cancellation__c,
+              Requested_Date__c, Marketing_Cancellation_Date__c,
+              Marketing_Cancellation_Scope__c, TCI_Cancellation_Date__c,
+              Save_Attempted__c, Save_Outcome__c, Retention_Notes__c,
+              New_Agency_Name__c, Cancellation_Channel__c, Detailed_Cancellation_Reason__c
+       FROM Cancellation_Request__c
+       WHERE Account__c = '${id}'
+       ORDER BY CreatedDate DESC
+       LIMIT 5`
+    ).catch(() => []),
 
     salesforceService.rawQuery<Reassignment>(
       `SELECT Id, Name, Previous_AM__c, Previous_AM__r.Name,
@@ -976,6 +999,17 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
       ? ` — $${refundRequests[0].Refund_Amount__c.toLocaleString()}`
       : '';
     alerts.push(`🚨 OPEN REFUND REQUEST: ${refundRequests[0].Name}${amt}`);
+  }
+  if (cancellationRequests.length > 0) {
+    const cr = cancellationRequests[0];
+    const daysUntil = cr.Days_Until_Effective_Cancellation__c;
+    const urgency = daysUntil != null && daysUntil <= 14 ? '🚨🚨' : '🚨';
+    alerts.push(`${urgency} CANCELLATION REQUEST: ${cr.Status__c ?? 'Unknown status'} — ${cr.Primary_Cancellation_Reason__c ?? 'No reason'}`);
+    if (cr.Effective_Cancellation_Date__c) {
+      alerts.push(`   Effective: ${cr.Effective_Cancellation_Date__c}${daysUntil != null ? ` (${daysUntil} days)` : ''}`);
+    }
+    if (cr.New_Agency_Name__c) alerts.push(`   ⚠️ Going to: ${cr.New_Agency_Name__c}`);
+    if (cr.Save_Attempted__c) alerts.push(`   Save attempted — outcome: ${cr.Save_Outcome__c ?? 'pending'}`);
   }
   if (accountRaw.Cancellation_or_Pause_Request_Date__c) {
     alerts.push(`🚨 CANCELLATION/PAUSE REQUEST on file (${accountRaw.Cancellation_or_Pause_Request_Date__c})`);
@@ -1229,6 +1263,40 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
       if (obj.Objective__c) lines.push(`  ${obj.Objective__c}`);
     }
     lines.push('');
+  }
+
+  // Cancellation Requests
+  if (cancellationRequests.length > 0) {
+    lines.push(`## 🚨 Cancellation Requests (${cancellationRequests.length})`);
+    for (const cr of cancellationRequests) {
+      const daysUntil = cr.Days_Until_Effective_Cancellation__c;
+      lines.push(`### ${cr.Name} — ${cr.Status__c ?? 'Unknown'}`);
+      lines.push(`- **Type:** ${cr.Cancellation_Type__c ?? 'N/A'} | **Requested:** ${cr.Requested_Date__c ?? 'N/A'}`);
+      lines.push(`- **Reason:** ${cr.Primary_Cancellation_Reason__c ?? 'Not specified'}`);
+      if (cr.Effective_Cancellation_Date__c) {
+        lines.push(`- **Effective Date:** ${cr.Effective_Cancellation_Date__c}${daysUntil != null ? ` (${daysUntil} days)` : ''}`);
+      }
+      if (cr.Marketing_Cancellation_Scope__c) {
+        lines.push(`- **Services Being Cancelled:** ${cr.Marketing_Cancellation_Scope__c}`);
+      }
+      if (cr.Marketing_Cancellation_Date__c) lines.push(`- **Marketing Cancel Date:** ${cr.Marketing_Cancellation_Date__c}`);
+      if (cr.TCI_Cancellation_Date__c) lines.push(`- **TCI Cancel Date:** ${cr.TCI_Cancellation_Date__c}`);
+      if (cr.New_Agency_Name__c) lines.push(`- **⚠️ New Agency:** ${cr.New_Agency_Name__c}`);
+      if (cr.Save_Attempted__c) lines.push(`- **Save Attempted:** Yes — Outcome: ${cr.Save_Outcome__c ?? 'pending'}`);
+      if (cr.Retention_Notes__c) {
+        const notes = cr.Retention_Notes__c.length > 500
+          ? cr.Retention_Notes__c.slice(0, 500) + '...'
+          : cr.Retention_Notes__c;
+        lines.push(`- **Retention Notes:** ${notes}`);
+      }
+      if (cr.Detailed_Cancellation_Reason__c) {
+        const detail = cr.Detailed_Cancellation_Reason__c.length > 500
+          ? cr.Detailed_Cancellation_Reason__c.slice(0, 500) + '...'
+          : cr.Detailed_Cancellation_Reason__c;
+        lines.push(`- **Detail:** ${detail}`);
+      }
+      lines.push('');
+    }
   }
 
   // AM Transition History

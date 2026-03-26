@@ -16,15 +16,19 @@ export const pipelineTools: Tool[] = [
   {
     name: 'sf_get_renewal_pipeline',
     description:
-      'Get all active accounts with open opportunities closing within the next N days, ' +
-      'sorted by close date. Shows opportunity stage, amount, and days remaining. ' +
-      'Use for weekly renewal pipeline reviews.',
+      'Get all active accounts with Contract_Renewal_Date__c within the next N days, ' +
+      'sorted by renewal date. Shows MRR, health, risk flags, and days remaining. ' +
+      'PDM renewals are auto-billing — no new Opportunity is created. Use for weekly renewal reviews.',
     inputSchema: {
       type: 'object',
       properties: {
         days: {
           type: 'number',
           description: `Number of days to look ahead (default: ${DEFAULT_RENEWAL_DAYS})`,
+        },
+        owner_id: {
+          type: 'string',
+          description: 'Filter to a specific AM by Salesforce User ID (optional)',
         },
       },
       required: [],
@@ -57,7 +61,8 @@ export const pipelineTools: Tool[] = [
 // ─── Input Schemas ────────────────────────────────────────────────────────
 
 const RenewalPipelineArgs = z.object({
-  days: z.number().min(1).max(365).default(DEFAULT_RENEWAL_DAYS),
+  days:     z.number().min(1).max(365).default(DEFAULT_RENEWAL_DAYS),
+  owner_id: z.string().optional(),
 });
 
 const UpsellArgs = z.object({
@@ -68,51 +73,67 @@ const UpsellArgs = z.object({
 // ─── Handlers ─────────────────────────────────────────────────────────────
 
 async function handleRenewalPipeline(rawArgs: unknown): Promise<string> {
-  const { days } = RenewalPipelineArgs.parse(rawArgs ?? {});
+  const { days, owner_id } = RenewalPipelineArgs.parse(rawArgs ?? {});
 
-  const renewals = await salesforceService.getUpcomingRenewals(days);
+  const accounts = await salesforceService.getUpcomingRenewals(days, owner_id);
 
   const lines: string[] = [
     `# Renewal Pipeline — Next ${days} Days`,
-    `${renewals.length} open opportunit${renewals.length === 1 ? 'y' : 'ies'} found`,
+    `${accounts.length} account${accounts.length === 1 ? '' : 's'} renewing`,
     `Generated: ${new Date().toLocaleString()}`,
     '',
   ];
 
-  if (renewals.length === 0) {
-    lines.push(`No open opportunities closing in the next ${days} days.`);
+  if (accounts.length === 0) {
+    lines.push(`No accounts with Contract_Renewal_Date__c in the next ${days} days.`);
     return lines.join('\n');
   }
 
-  // Group by urgency tier
-  const urgent  = renewals.filter((r) => daysBetween(r.CloseDate) <= 14);
-  const soon    = renewals.filter((r) => { const d = daysBetween(r.CloseDate); return d > 14 && d <= 30; });
-  const upcoming = renewals.filter((r) => daysBetween(r.CloseDate) > 30);
-
-  const totalValue = renewals.reduce((sum, r) => sum + (r.Amount ?? 0), 0);
-  lines.push(`**Total pipeline value:** $${totalValue.toLocaleString()}`);
+  const totalMrr = accounts.reduce((sum, a) => sum + (a.Total_Monthly_Recurring_Amount__c ?? 0), 0);
+  lines.push(`**Total MRR renewing:** $${totalMrr.toLocaleString()}/mo`);
   lines.push('');
 
-  const renderGroup = (label: string, opps: typeof renewals): void => {
-    if (opps.length === 0) return;
-    lines.push(`## ${label} (${opps.length})`);
-    for (const r of opps) {
-      const daysLeft = daysBetween(r.CloseDate);
-      const amt  = r.Amount ? `$${r.Amount.toLocaleString()}` : 'No amount';
-      const owner = r.Account?.Owner?.Name ?? 'Unknown';
-      const acctName = r.Account?.Name ?? r.AccountId;
+  // Group by urgency
+  const critical = accounts.filter((a) => daysBetween(a.Contract_Renewal_Date__c) <= 14);
+  const soon     = accounts.filter((a) => { const d = daysBetween(a.Contract_Renewal_Date__c); return d > 14 && d <= 30; });
+  const upcoming = accounts.filter((a) => daysBetween(a.Contract_Renewal_Date__c) > 30);
 
-      lines.push(`### ${acctName}`);
-      lines.push(`- **Opp:** ${r.Name}`);
-      lines.push(`- **Stage:** ${r.StageName} | **Closes:** ${r.CloseDate} (${daysLeft} days)`);
-      lines.push(`- **Amount:** ${amt} | **Owner:** ${owner}`);
+  const renderGroup = (label: string, group: typeof accounts): void => {
+    if (group.length === 0) return;
+    lines.push(`## ${label} (${group.length})`);
+    for (const a of group) {
+      const daysLeft  = daysBetween(a.Contract_Renewal_Date__c);
+      const owner     = (a.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown';
+      const mrr       = a.Total_Monthly_Recurring_Amount__c
+        ? `$${a.Total_Monthly_Recurring_Amount__c.toLocaleString()}/mo` : 'MRR unknown';
+      const tier      = a.Tier__c ? ` | ${a.Tier__c}` : '';
+      const health    = a.Health_Tier__c
+        ? ` | Health: ${a.Health_Tier__c}${a.Health_Score__c != null ? ` (${a.Health_Score__c})` : ''}`
+        : '';
+      const daysSince = a.LastActivityDate
+        ? Math.floor((Date.now() - new Date(a.LastActivityDate).getTime()) / 86_400_000)
+        : null;
+      const contact   = daysSince != null ? `Last contact: ${daysSince}d ago` : 'Last contact: Never';
+
+      // Risk flags
+      const flags: string[] = [];
+      if (a.Flagged_Status__c)                         flags.push('🚩 Flagged');
+      if (a.Delinquent__c)                              flags.push('💸 Delinquent');
+      if (a.Cancellation_or_Pause_Request_Date__c)      flags.push('⚠️ Cancel/Pause request on file');
+      if (a.Status__c === 'Non Renewing')               flags.push('🚨 Non Renewing');
+      if (a.Status__c === 'Paused')                     flags.push('⏸️ Paused');
+
+      lines.push(`### ${a.Name}`);
+      lines.push(`**Renews:** ${a.Contract_Renewal_Date__c} (${daysLeft}d) | **MRR:** ${mrr}${tier}${health}`);
+      lines.push(`**Owner:** ${owner} | **Status:** ${a.Status__c ?? 'Unknown'} | ${contact}`);
+      if (flags.length) lines.push(`**⚠️ Risks:** ${flags.join(' · ')}`);
       lines.push('');
     }
   };
 
-  renderGroup('🚨 Close Immediately (≤ 14 days)', urgent);
-  renderGroup('⚠️ Closing Soon (15–30 days)', soon);
-  renderGroup('📅 Upcoming (31+ days)', upcoming);
+  renderGroup('🚨 Renewing in ≤ 14 Days — Act Now', critical);
+  renderGroup('⚠️ Renewing in 15–30 Days', soon);
+  renderGroup('📅 Renewing in 31+ Days', upcoming);
 
   return lines.join('\n');
 }

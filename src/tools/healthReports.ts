@@ -8,7 +8,7 @@ import {
 } from '../services/healthScoring.js';
 import { CHURN_RISK_THRESHOLD, DEFAULT_CHURN_LIMIT } from '../constants.js';
 import { WILLIAM_SUMMERS_USER_ID } from './accountManagement.js';
-import type { SalesforceRefundRequest, SalesforceChangeOrder } from '../types.js';
+import type { SalesforceRefundRequest, SalesforceCancellationRequest } from '../types.js';
 
 // ─── Governance Constants ──────────────────────────────────────────────────
 
@@ -271,8 +271,8 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
     Next_Alignment_Call__c?: string;
   }
 
-  // Run account query + refund request query + cancellation change order query in parallel
-  const [accounts, allRefundRequests, cancellationOrders] = await Promise.all([
+  // Run account query + refund request query + cancellation request query in parallel
+  const [accounts, allRefundRequests, cancellationRequests] = await Promise.all([
     salesforceService.rawQuery<ChurnAccount>(
       `SELECT Id, Name, Status__c, OwnerId, Owner.Name,
               Total_Monthly_Recurring_Amount__c, Tier__c,
@@ -299,27 +299,34 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
        LIMIT 200`
     ).catch(() => [] as SalesforceRefundRequest[]),
 
-    salesforceService.rawQuery<SalesforceChangeOrder>(
-      `SELECT Id, Account__c, Name, Type__c, Status__c, Cancellation_Date__c, CreatedDate
-       FROM Change_Order__c
-       WHERE (Type__c = 'Cancellation' OR Type__c = 'Pause')
-         AND Status__c != 'Closed'
+    salesforceService.rawQuery<SalesforceCancellationRequest>(
+      `SELECT Id, Account__c, Name, Status__c, Primary_Cancellation_Reason__c,
+              Cancellation_Type__c, Effective_Cancellation_Date__c,
+              Days_Until_Effective_Cancellation__c, Requested_Date__c,
+              Save_Attempted__c, Save_Outcome__c, New_Agency_Name__c
+       FROM Cancellation_Request__c
+       WHERE Status__c NOT IN ('Rejected', 'Cancelled Process', 'Completed')
          AND Account__c != null
-       ORDER BY CreatedDate DESC
+       ORDER BY Effective_Cancellation_Date__c ASC NULLS LAST
        LIMIT 200`
-    ).catch(() => [] as SalesforceChangeOrder[]),
+    ).catch(() => [] as SalesforceCancellationRequest[]),
   ]);
 
   // Build lookup maps
   const refundAccountIds = new Set(allRefundRequests.map((r) => r.Account__c));
-  const cancelOrderAccountIds = new Set(cancellationOrders.map((o) => o.Account__c));
+  const cancelRequestsByAccount = new Map<string, SalesforceCancellationRequest[]>();
+  for (const cr of cancellationRequests) {
+    const list = cancelRequestsByAccount.get(cr.Account__c) ?? [];
+    list.push(cr);
+    cancelRequestsByAccount.set(cr.Account__c, list);
+  }
 
   // Score accounts
   type ScoredEntry = {
     accountId: string; accountName: string; ownerName: string;
     mrr?: number; tier?: string;
     score: number; riskFactors: string[];
-    hasRefundRequest: boolean; hasCancelOrder: boolean;
+    hasRefundRequest: boolean; hasCancelRequest: boolean;
   };
 
   const scored: ScoredEntry[] = [];
@@ -370,19 +377,28 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
     }
 
     const hasRefundRequest = refundAccountIds.has(account.Id);
-    const hasCancelOrder   = cancelOrderAccountIds.has(account.Id);
+    const accountCancelRequests = cancelRequestsByAccount.get(account.Id) ?? [];
+    const hasCancelRequest = accountCancelRequests.length > 0;
 
     if (hasRefundRequest) {
       score = Math.max(0, score - 30);
       riskFactors.push('⚠️ Open refund request');
     }
-    if (hasCancelOrder) {
-      score = Math.max(0, score - 20);
-      riskFactors.push('Open cancellation/pause change order');
+    if (hasCancelRequest) {
+      const cr = accountCancelRequests[0]; // most urgent (sorted by effective date)
+      score = Math.max(0, score - 30);
+      const daysUntil = cr.Days_Until_Effective_Cancellation__c;
+      const reason = cr.Primary_Cancellation_Reason__c ?? 'No reason given';
+      const dateStr = cr.Effective_Cancellation_Date__c ?? 'TBD';
+      const urgency = daysUntil != null && daysUntil <= 14 ? '🚨' : '⚠️';
+      riskFactors.push(`${urgency} Cancellation Request (${cr.Status__c}) — ${reason}`);
+      riskFactors.push(`  Effective: ${dateStr}${daysUntil != null ? ` (${daysUntil}d)` : ''}`);
+      if (cr.New_Agency_Name__c) riskFactors.push(`  Going to: ${cr.New_Agency_Name__c}`);
+      if (cr.Save_Attempted__c) riskFactors.push(`  Save attempted — outcome: ${cr.Save_Outcome__c ?? 'pending'}`);
     }
 
     const isStatusRisk = isNonRenewing || isPaused || isDelinquent;
-    if (score <= threshold || hasRefundRequest || hasCancelOrder || isStatusRisk) {
+    if (score <= threshold || hasRefundRequest || hasCancelRequest || isStatusRisk) {
       const ownerName = (account.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown';
       scored.push({
         accountId:   account.Id,
@@ -393,15 +409,15 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
         score,
         riskFactors,
         hasRefundRequest,
-        hasCancelOrder,
+        hasCancelRequest,
       });
     }
   }
 
-  // Sort: refund requests and cancel orders first, then Non Renewing/Paused/Delinquent, then by score ascending
+  // Sort: refund/cancel requests first, then status risks, then by score ascending
   scored.sort((a, b) => {
     const priority = (e: typeof scored[0]) =>
-      (e.hasRefundRequest || e.hasCancelOrder) ? 0 :
+      (e.hasRefundRequest || e.hasCancelRequest) ? 0 :
       e.riskFactors.some((f) => f.includes('Non Renewing') || f.includes('Paused') || f.includes('Delinquent')) ? 1 :
       2;
     const pa = priority(a), pb = priority(b);
@@ -417,7 +433,7 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
     `Excludes: William Summers accounts | Statuses: ${INACTIVE_STATUS_VALUES.join(', ')}`,
     `Generated: ${new Date().toLocaleString()}`,
     '',
-    '> Accounts with open Refund Requests or Cancellation Change Orders appear first regardless of score.',
+    '> Accounts with open Refund Requests or Cancellation Requests appear first regardless of score.',
     '> Run `sf_get_account_health_report` for a full score on any individual account.',
     '',
   ];
@@ -434,8 +450,8 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
       const mrr  = r.mrr ? ` | MRR: $${r.mrr.toLocaleString()}` : '';
       const tier = r.tier ? ` | Tier: ${r.tier}` : '';
       const badges = [
-        r.hasRefundRequest ? '⚠️ REFUND REQUEST' : '',
-        r.hasCancelOrder   ? '🚨 CANCEL ORDER'   : '',
+        r.hasRefundRequest  ? '⚠️ REFUND REQUEST'      : '',
+        r.hasCancelRequest  ? '🚨 CANCELLATION REQUEST' : '',
       ].filter(Boolean).join(' ');
 
       lines.push(`### ${i + 1}. ${r.accountName}${badges ? `  ${badges}` : ''}`);

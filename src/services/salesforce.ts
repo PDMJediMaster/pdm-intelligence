@@ -185,21 +185,33 @@ class SalesforceService {
     `);
   }
 
-  async getUpcomingRenewals(daysOut: number): Promise<
-    (SalesforceOpportunity & { Account: { Name: string; Owner: { Name: string } } })[]
-  > {
+  async getUpcomingRenewals(daysOut: number, ownerId?: string): Promise<{
+    Id: string; Name: string; OwnerId: string; Owner?: { Name: string };
+    Status__c?: string; Total_Monthly_Recurring_Amount__c?: number; Tier__c?: string;
+    Contract_Renewal_Date__c: string; LastActivityDate?: string;
+    Health_Score__c?: number; Health_Tier__c?: string;
+    Flagged_Status__c?: boolean; Delinquent__c?: boolean;
+    Cancellation_or_Pause_Request_Date__c?: string;
+  }[]> {
     const today  = isoDate(0);
     const future = isoDate(daysOut);
-    return this.query<
-      SalesforceOpportunity & { Account: { Name: string; Owner: { Name: string } } }
-    >(`
-      SELECT Id, AccountId, Account.Name, Account.Owner.Name,
-             Name, StageName, CloseDate, Amount, Type, Probability
-      FROM Opportunity
-      WHERE IsClosed = false
-        AND CloseDate >= ${today}
-        AND CloseDate <= ${future}
-      ORDER BY CloseDate ASC
+    const ownerFilter = ownerId ? `AND OwnerId = '${ownerId}'` : '';
+    return this.query(`
+      SELECT Id, Name, OwnerId, Owner.Name,
+             Status__c, Total_Monthly_Recurring_Amount__c, Tier__c,
+             Contract_Renewal_Date__c, LastActivityDate,
+             Health_Score__c, Health_Tier__c,
+             Flagged_Status__c, Delinquent__c,
+             Cancellation_or_Pause_Request_Date__c
+      FROM Account
+      WHERE Contract_Renewal_Date__c >= ${today}
+        AND Contract_Renewal_Date__c <= ${future}
+        AND Status__c NOT IN ('Cancelled','Inactive','Expired')
+        AND Status__c != null
+        AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
+        AND OwnerId != '005PU000001eUQDYA2'
+        ${ownerFilter}
+      ORDER BY Contract_Renewal_Date__c ASC
       LIMIT 200
     `);
   }

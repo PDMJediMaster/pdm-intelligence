@@ -180,6 +180,28 @@ export interface SalesforceChangeOrder {
   CreatedDate: string;
 }
 
+export interface SalesforceCancellationRequest {
+  Id: string;
+  Account__c: string;
+  Name: string;
+  Status__c?: string;
+  Primary_Cancellation_Reason__c?: string;
+  Cancellation_Type__c?: string;
+  Effective_Cancellation_Date__c?: string;
+  Days_Until_Effective_Cancellation__c?: number;
+  Requested_Date__c?: string;
+  Marketing_Cancellation_Date__c?: string;
+  Marketing_Cancellation_Scope__c?: string;
+  TCI_Cancellation_Date__c?: string;
+  Save_Attempted__c?: boolean;
+  Save_Outcome__c?: string;
+  Retention_Notes__c?: string;
+  New_Agency_Name__c?: string;
+  Cancellation_Channel__c?: string;
+  Detailed_Cancellation_Reason__c?: string;
+  CreatedDate: string;
+}
+
 // ─── Domain Models ─────────────────────────────────────────────────────────
 
 export interface HealthScore {
