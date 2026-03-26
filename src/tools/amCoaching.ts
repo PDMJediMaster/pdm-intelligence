@@ -141,9 +141,13 @@ async function handleAMCoachingBrief(rawArgs: unknown): Promise<string> {
        WHERE ${ACTIVE_CLIENT_FILTER}
          AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
          AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
+         AND Owner.UserRole.Name IN (
+           'Account Manager',
+           'Account Manager Team Lead',
+           'Director of Account Management'
+         )
          ${ownerFilter}
-       ORDER BY OwnerId, Name
-       LIMIT 5000`
+       ORDER BY OwnerId, Name`
     ),
 
     salesforceService.rawQuery<{ Account__c: string }>(
