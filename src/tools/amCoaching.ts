@@ -139,10 +139,11 @@ async function handleAMCoachingBrief(rawArgs: unknown): Promise<string> {
               Health_Score__c, Health_Tier__c
        FROM Account
        WHERE ${ACTIVE_CLIENT_FILTER}
+         AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
          AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
          ${ownerFilter}
        ORDER BY OwnerId, Name
-       LIMIT 500`
+       LIMIT 5000`
     ),
 
     salesforceService.rawQuery<{ Account__c: string }>(
