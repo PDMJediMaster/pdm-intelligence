@@ -2,7 +2,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { salesforceService } from '../services/salesforce.js';
 import { WILLIAM_SUMMERS_USER_ID } from './accountManagement.js';
-import { ACTIVE_CLIENT_FILTER } from './healthReports.js';
+import { ACTIVE_CLIENT_FILTER, ACTIVE_ROLE_FILTER } from './healthReports.js';
 
 // ─── Tool Definition ──────────────────────────────────────────────────────
 
@@ -141,11 +141,7 @@ async function handleAMCoachingBrief(rawArgs: unknown): Promise<string> {
        WHERE ${ACTIVE_CLIENT_FILTER}
          AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
          AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
-         AND Owner.UserRole.Name IN (
-           'Account Manager',
-           'Account Manager Team Lead',
-           'Director of Account Management'
-         )
+         AND ${ACTIVE_ROLE_FILTER}
          ${ownerFilter}
        ORDER BY OwnerId, Name`
     ),

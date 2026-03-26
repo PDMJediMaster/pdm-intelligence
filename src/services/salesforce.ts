@@ -12,6 +12,12 @@ import { MAX_ACCOUNT_QUERY } from '../constants.js';
 
 config();
 
+/** PDM roles whose owned accounts should appear in bulk operational queries */
+const ACTIVE_ROLE_SOQL = `Owner.IsActive = true AND Owner.UserRole.Name IN (
+  'Account Manager', 'Account Manager Team Lead', 'Sales Execs',
+  'CEO', 'Practice Growth Advisor', 'System Administrator', 'TCI Mentorship'
+)`;
+
 /** Validate a Salesforce ID (15 or 18 alphanumeric chars) */
 function assertSfId(id: string, label = 'ID'): string {
   if (!/^[a-zA-Z0-9]{15,18}$/.test(id)) {
@@ -130,6 +136,7 @@ class SalesforceService {
       FROM Account
       WHERE Status__c = 'Active'
         AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
+        AND ${ACTIVE_ROLE_SOQL}
       ORDER BY Name
       LIMIT ${limit}
     `);
@@ -144,6 +151,7 @@ class SalesforceService {
       FROM Account
       WHERE Status__c = 'Active'
         AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
+        AND ${ACTIVE_ROLE_SOQL}
         AND (LastActivityDate = null OR LastActivityDate < ${cutoff})
       ORDER BY LastActivityDate ASC NULLS FIRST
       LIMIT ${limit}
@@ -209,6 +217,7 @@ class SalesforceService {
         AND Status__c NOT IN ('Cancelled','Inactive','Expired')
         AND Status__c != null
         AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
+        AND ${ACTIVE_ROLE_SOQL}
         AND OwnerId != '005PU000001eUQDYA2'
         ${ownerFilter}
       ORDER BY Contract_Renewal_Date__c ASC
@@ -256,9 +265,9 @@ class SalesforceService {
       FROM Account
       WHERE Status__c NOT IN ('Cancelled','Inactive','Expired')
         AND Status__c != null
+        AND ${ACTIVE_ROLE_SOQL}
         AND OwnerId != '005PU000001eUQDYA2'
         AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
-      LIMIT 5000
     `);
 
     const results: { accountId: string; productName: string }[] = [];

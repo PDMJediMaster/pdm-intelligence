@@ -18,6 +18,7 @@ import {
   analyzeProductMentions,
   formatProductMentionsSection,
 } from '../services/sentimentEngine.js';
+import { ACTIVE_ROLE_FILTER } from './healthReports.js';
 
 // ─── Governance Constants ──────────────────────────────────────────────────
 
@@ -248,6 +249,7 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
          AND Contract_Renewal_Date__c <= ${in30Days}
          AND ${ACTIVE_CLIENT_FILTER}
          AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
+         AND ${ACTIVE_ROLE_FILTER}
          AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
          ${ownerFilterAcc}
        ORDER BY Contract_Renewal_Date__c ASC

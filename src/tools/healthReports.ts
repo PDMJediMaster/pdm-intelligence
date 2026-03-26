@@ -34,6 +34,21 @@ export const ACTIVE_CLIENT_FILTER =
 export const NOISE_ACCOUNT_FILTER =
   `(NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'`;
 
+/**
+ * Restricts bulk queries to accounts owned by active users in recognized PDM roles.
+ * Excludes system/integration accounts (Inovi Admin, etc.) and deactivated users.
+ */
+export const ACTIVE_ROLE_FILTER =
+  `Owner.IsActive = true AND Owner.UserRole.Name IN (
+    'Account Manager',
+    'Account Manager Team Lead',
+    'Sales Execs',
+    'CEO',
+    'Practice Growth Advisor',
+    'System Administrator',
+    'TCI Mentorship'
+  )`;
+
 // ─── Tool Definitions ─────────────────────────────────────────────────────
 
 export const healthReportTools: Tool[] = [
@@ -283,11 +298,11 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
        FROM Account
        WHERE ${ACTIVE_CLIENT_FILTER}
          AND ${NOISE_ACCOUNT_FILTER}
+         AND ${ACTIVE_ROLE_FILTER}
          AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
          ${ownerFilter}
          AND IsDeleted = false
-       ORDER BY LastActivityDate ASC NULLS FIRST
-       LIMIT 5000`
+       ORDER BY LastActivityDate ASC NULLS FIRST`
     ),
 
     salesforceService.rawQuery<SalesforceRefundRequest>(

@@ -22,7 +22,7 @@ import { z } from 'zod';
 import { salesforceService } from '../services/salesforce.js';
 import { proxyHealthScore } from '../services/healthScoring.js';
 import { WILLIAM_SUMMERS_USER_ID } from './accountManagement.js';
-import { INACTIVE_STATUS_VALUES, ACTIVE_CLIENT_FILTER } from './healthReports.js';
+import { INACTIVE_STATUS_VALUES, ACTIVE_CLIENT_FILTER, ACTIVE_ROLE_FILTER } from './healthReports.js';
 
 // ─── Salesforce Types ─────────────────────────────────────────────────────────
 
@@ -134,6 +134,7 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
      FROM Account
      WHERE ${ACTIVE_CLIENT_FILTER}
        AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
+       AND ${ACTIVE_ROLE_FILTER}
        AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
      ORDER BY LastActivityDate ASC NULLS FIRST
      LIMIT ${limit}`
@@ -667,6 +668,7 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
      WHERE CreatedDate >= 2026-02-01T00:00:00Z
        AND ${ACTIVE_CLIENT_FILTER}
        AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
+       AND ${ACTIVE_ROLE_FILTER}
        AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
        AND Id NOT IN (SELECT Account__c FROM Client_Onboarding__c WHERE Account__c != null)
      ORDER BY CreatedDate DESC
