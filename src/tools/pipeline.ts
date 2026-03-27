@@ -113,7 +113,9 @@ async function handleRenewalPipeline(rawArgs: unknown): Promise<string> {
       const daysSince = a.LastActivityDate
         ? Math.floor((Date.now() - new Date(a.LastActivityDate).getTime()) / 86_400_000)
         : null;
-      const contact   = daysSince != null ? `Last contact: ${daysSince}d ago` : 'Last contact: Never';
+      const contact   = daysSince != null
+        ? (daysSince < 0 ? `Last contact: scheduled ${Math.abs(daysSince)}d from now` : `Last contact: ${daysSince}d ago`)
+        : 'Last contact: Never';
 
       // Risk flags
       const flags: string[] = [];
@@ -143,7 +145,7 @@ async function handleUpsellOpportunities(rawArgs: unknown): Promise<string> {
 
   // Fetch all active accounts and their products in bulk
   const [activeAccounts, allProductData] = await Promise.all([
-    salesforceService.getActiveAccounts(500),
+    salesforceService.getActiveAccounts(5000),
     salesforceService.getAllActiveAccountProducts(),
   ]);
 
