@@ -60,9 +60,6 @@ interface SFLead {
   pi__utm_term__c?: string;
   pi__first_activity__c?: string;
   pi__last_activity__c?: string;
-  pi__first_touch_url__c?: string;
-  pi__last_touch_url__c?: string;
-  pi__email_optout__c?: boolean;
 }
 
 interface SFTask {
@@ -147,7 +144,7 @@ function fmt(d: string | null | undefined): string {
 
 function daysSince(d: string | null | undefined): string {
   if (!d) return 'Never';
-  const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+  const days = Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 86400000)); // future dates clamp to 0
   if (days === 0) return 'Today';
   if (days === 1) return 'Yesterday';
   return `${days} days ago`;
@@ -215,8 +212,6 @@ async function handleLeadIntelligence(rawArgs: unknown): Promise<string> {
     'pi__utm_source__c', 'pi__utm_medium__c',
     'pi__utm_campaign__c', 'pi__utm_content__c', 'pi__utm_term__c',
     'pi__first_activity__c', 'pi__last_activity__c',
-    'pi__first_touch_url__c', 'pi__last_touch_url__c',
-    'pi__email_optout__c',
   ].join(', ');
 
   if (resolvedLeadId) {
@@ -297,7 +292,7 @@ async function handleLeadIntelligence(rawArgs: unknown): Promise<string> {
   lines.push(`## 📞 Contact`);
   if (sfLead.Phone)       lines.push(`- **Phone:** ${sfLead.Phone}`);
   if (sfLead.MobilePhone) lines.push(`- **Mobile:** ${sfLead.MobilePhone}`);
-  if (sfLead.Email)       lines.push(`- **Email:** ${sfLead.Email}${sfLead.pi__email_optout__c ? ' ⚠️ Opted out of email' : ''}`);
+  if (sfLead.Email)       lines.push(`- **Email:** ${sfLead.Email}`);
   if (sfLead.Website)     lines.push(`- **Website:** ${sfLead.Website}`);
   lines.push('');
 
@@ -312,8 +307,7 @@ async function handleLeadIntelligence(rawArgs: unknown): Promise<string> {
     if (sfLead.pi__utm_campaign__c)  lines.push(`- **Campaign:** ${sfLead.pi__utm_campaign__c}`);
     if (sfLead.pi__utm_content__c)   lines.push(`- **Content:** ${sfLead.pi__utm_content__c}`);
     if (sfLead.pi__utm_term__c)      lines.push(`- **Search Term:** ${sfLead.pi__utm_term__c}`);
-    if (sfLead.pi__first_touch_url__c) lines.push(`- **First Touch:** ${sfLead.pi__first_touch_url__c}`);
-    if (sfLead.pi__last_touch_url__c)  lines.push(`- **Last Touch:** ${sfLead.pi__last_touch_url__c}`);
+    // pi__first_touch_url__c does not exist in org — removed
     if (sfLead.pi__first_activity__c)  lines.push(`- **First Activity:** ${fmt(sfLead.pi__first_activity__c)}`);
     if (sfLead.pi__last_activity__c)   lines.push(`- **Last Pardot Activity:** ${fmt(sfLead.pi__last_activity__c)} (${daysSince(sfLead.pi__last_activity__c)})`);
   } else {

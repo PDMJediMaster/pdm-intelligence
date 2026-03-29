@@ -134,7 +134,8 @@ const RepSynopsisArgs = z.object({
 
 function daysSince(isoDate: string | null | undefined): number {
   if (!isoDate) return 9999;
-  return Math.floor((Date.now() - new Date(isoDate).getTime()) / 86_400_000);
+  const days = Math.floor((Date.now() - new Date(isoDate).getTime()) / 86_400_000);
+  return Math.max(0, days); // future dates clamp to 0
 }
 
 function formatDate(d: string | null | undefined): string {
@@ -639,9 +640,8 @@ async function handleEventConversionPipeline(rawArgs: unknown): Promise<string> 
      FROM TCI_Events_Attended__c
      WHERE Account__c != null
        AND Is_This_A_Sponsor__c = false
-       AND Are_You_A_Current_PDM_Client__c = false
        AND Account__r.Status__c NOT IN ('Active', 'Reinstated')
-       AND (Account__r.TCI_Status__c = null OR Account__r.TCI_Status__c != 'Member')
+       AND Account__r.TCI_Status__c != 'Member'
        ${ownerClause}
      ORDER BY Account__r.LastActivityDate ASC NULLS FIRST
      LIMIT ${Math.min(limit * 5, 500)}`

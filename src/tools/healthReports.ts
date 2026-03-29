@@ -47,7 +47,7 @@ export const ACTIVE_ROLE_FILTER =
     'Practice Growth Advisor',
     'System Administrator',
     'TCI Mentorship'
-  ) AND Owner.Name != 'Service Account' AND Owner.Name != 'Gerritt Cora'`;
+  ) AND Owner.Name != 'Service Account' AND Owner.Name != 'Gerritt Cora' AND Owner.Name != 'Ariel Canchani'`;
 
 // ─── Tool Definitions ─────────────────────────────────────────────────────
 

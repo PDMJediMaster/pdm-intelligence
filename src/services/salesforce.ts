@@ -132,13 +132,13 @@ class SalesforceService {
     return this.query<SalesforceAccount>(`
       SELECT Id, Name, Phone, OwnerId, Owner.Name,
              Status__c, TCI_Status__c,
+             Total_Monthly_Recurring_Amount__c,
              LastActivityDate, Management_Fee__c, Contract_End_Date__c
       FROM Account
       WHERE Status__c = 'Active'
         AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
         AND ${ACTIVE_ROLE_SOQL}
       ORDER BY Name
-      LIMIT ${limit}
     `);
   }
 

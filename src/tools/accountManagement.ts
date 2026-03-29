@@ -137,7 +137,8 @@ const LogNoteArgs = z.object({
 
 function daysSince(dateStr: string | null | undefined): number | null {
   if (!dateStr) return null;
-  return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86_400_000);
+  const days = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86_400_000);
+  return Math.max(0, days); // future dates clamp to 0
 }
 
 function daysUntil(dateStr: string | null | undefined): number | null {

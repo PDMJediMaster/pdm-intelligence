@@ -164,7 +164,8 @@ function daysUntil(d: string | null | undefined): number | null {
 
 function daysSince(d: string | null | undefined): number | null {
   if (!d) return null;
-  return Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+  const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+  return Math.max(0, days); // future dates clamp to 0
 }
 
 function renewalUrgency(days: number | null): { emoji: string; label: string } {
