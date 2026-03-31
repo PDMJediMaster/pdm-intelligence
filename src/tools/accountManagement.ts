@@ -584,6 +584,28 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     Is_Primary_Competitor__c?: boolean; Snapshot_Date__c?: string;
   }
 
+  interface CallIntelligenceRecord {
+    Id: string;
+    Call_Date__c?: string;
+    Call_Duration_Seconds__c?: number;
+    Sentiment_Label__c?: string;
+    Sentiment_Score__c?: number;
+    Tone_Shift__c?: string;
+    SF_Intelligence_Score__c?: number;
+    Key_Topics__c?: string;
+    Commitments_Made__c?: string;
+    Risk_Signals__c?: string;
+    Competitor_Mentions__c?: string;
+    AI_Summary__c?: string;
+    Doctor_Reached__c?: boolean;
+    Satisfaction_Signal__c?: string;
+    Follow_Up_Required__c?: boolean;
+    Budget_Concern__c?: boolean;
+    Pause_Cancel_Language__c?: boolean;
+    Competitor_Mentioned__c?: boolean;
+    Processing_Status__c?: string;
+  }
+
   interface VideoCallRecord {
     Id: string;
     Name?: string;
@@ -635,6 +657,7 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
     onboardingRecords,
     tciOpportunities,
     emailMessages,
+    callIntelligenceRecords,
   ] = await Promise.all([
     salesforceService.rawQuery<FullAccount>(
       `SELECT Id, Name, Phone, Website, BillingCity, BillingState,
@@ -849,6 +872,22 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
        ORDER BY MessageDate DESC NULLS LAST
        LIMIT 25`
     ).catch(() => [] as EmailMessageRecord[]),
+
+    // Call Intelligence records — AI-processed call analysis from Workflow 11
+    salesforceService.rawQuery<CallIntelligenceRecord>(
+      `SELECT Id, Call_Date__c, Call_Duration_Seconds__c,
+              Sentiment_Label__c, Sentiment_Score__c, Tone_Shift__c,
+              SF_Intelligence_Score__c, Key_Topics__c, Commitments_Made__c,
+              Risk_Signals__c, Competitor_Mentions__c, AI_Summary__c,
+              Doctor_Reached__c, Satisfaction_Signal__c, Follow_Up_Required__c,
+              Budget_Concern__c, Pause_Cancel_Language__c, Competitor_Mentioned__c,
+              Processing_Status__c
+       FROM Call_Intelligence__c
+       WHERE Account__c = '${id}'
+         AND Processing_Status__c = 'Processed'
+       ORDER BY Call_Date__c DESC NULLS LAST
+       LIMIT 5`
+    ).catch(() => [] as CallIntelligenceRecord[]),
   ]);
 
   if (!accountRaw) throw new Error(`Account not found: ${id}`);
@@ -1369,6 +1408,84 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
       lines.push('*No CI-recorded call data found for the doctor contact.*');
     }
 
+    lines.push('');
+  }
+
+  // ── Call Intelligence (Workflow 11 — AI-processed calls) ────────────────
+  const processedCalls = callIntelligenceRecords.filter(
+    (ci) => ci.Processing_Status__c === 'Processed'
+  );
+
+  if (processedCalls.length > 0) {
+    // Add CI-derived critical alerts
+    const latestCI = processedCalls[0];
+    if (latestCI.Pause_Cancel_Language__c) {
+      alerts.push('🚨 PAUSE/CANCEL LANGUAGE detected in most recent call');
+    }
+    if (latestCI.Budget_Concern__c) {
+      alerts.push('💰 BUDGET CONCERN raised in most recent call');
+    }
+    if (latestCI.Competitor_Mentioned__c && latestCI.Competitor_Mentions__c) {
+      alerts.push(`🏴 COMPETITOR MENTIONED in call: ${latestCI.Competitor_Mentions__c.slice(0, 100)}`);
+    }
+    if (latestCI.Satisfaction_Signal__c === 'Frustrated' || latestCI.Satisfaction_Signal__c === 'Escalation Risk') {
+      alerts.push(`😡 CLIENT ${latestCI.Satisfaction_Signal__c?.toUpperCase()} — last call satisfaction: ${latestCI.Satisfaction_Signal__c}`);
+    }
+
+    // Sentiment trend from last 3 calls
+    const recentScores = processedCalls.slice(0, 3).map((ci) => ci.Sentiment_Label__c ?? 'Unknown');
+    const trendLine = recentScores.join(' → ');
+    const sentimentEmojis: Record<string, string> = {
+      Positive: '🟢', Neutral: '🟡', Negative: '🔴', Mixed: '🟠',
+    };
+
+    lines.push('## 🧠 Call Intelligence (AI-Processed)');
+    lines.push(`*Last ${processedCalls.length} calls analyzed by Prophet Workflow 11*`);
+    lines.push('');
+    lines.push(`**Sentiment Trend:** ${recentScores.map((s) => `${sentimentEmojis[s] ?? '⚪'} ${s}`).join(' → ')}`);
+    lines.push('');
+
+    for (const ci of processedCalls) {
+      const date = ci.Call_Date__c?.split('T')[0] ?? 'Unknown';
+      const durMin = ci.Call_Duration_Seconds__c ? Math.round(ci.Call_Duration_Seconds__c / 60) : '?';
+      const sentEmoji = sentimentEmojis[ci.Sentiment_Label__c ?? ''] ?? '⚪';
+      const scoreLabel = ci.SF_Intelligence_Score__c != null ? `Intel: ${ci.SF_Intelligence_Score__c}` : '';
+
+      lines.push(`### ${date} — ${durMin} min | ${sentEmoji} ${ci.Sentiment_Label__c ?? 'Unknown'} (${ci.Sentiment_Score__c ?? '?'}/100) | ${scoreLabel}`);
+
+      if (ci.Tone_Shift__c && ci.Tone_Shift__c !== 'N/A') {
+        lines.push(`**Tone Shift:** ${ci.Tone_Shift__c}`);
+      }
+      if (ci.Doctor_Reached__c) {
+        lines.push('**👨‍⚕️ Doctor was on the call**');
+      }
+      if (ci.Key_Topics__c) {
+        lines.push(`**Topics:** ${ci.Key_Topics__c}`);
+      }
+      if (ci.Commitments_Made__c) {
+        lines.push(`**Commitments:** ${ci.Commitments_Made__c}`);
+      }
+      if (ci.Risk_Signals__c) {
+        lines.push(`**⚠️ Risk Signals:** ${ci.Risk_Signals__c}`);
+      }
+      if (ci.Competitor_Mentions__c) {
+        lines.push(`**🏴 Competitors:** ${ci.Competitor_Mentions__c}`);
+      }
+      if (ci.Follow_Up_Required__c) {
+        lines.push('**📋 Follow-up required**');
+      }
+      if (ci.AI_Summary__c) {
+        // Truncate long summaries for the brief
+        const summary = ci.AI_Summary__c.length > 500
+          ? ci.AI_Summary__c.slice(0, 500) + '…'
+          : ci.AI_Summary__c;
+        lines.push(`**Summary:** ${summary}`);
+      }
+      lines.push('');
+    }
+  } else {
+    lines.push('## 🧠 Call Intelligence (AI-Processed)');
+    lines.push('No AI-processed call records found for this account.');
     lines.push('');
   }
 

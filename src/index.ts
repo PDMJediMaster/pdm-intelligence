@@ -19,6 +19,8 @@ import { leadIntelligenceTools, leadIntelligenceHandlers } from './tools/leadInt
 import { renewalProofTools, renewalProofHandlers } from './tools/renewalProof.js';
 import { healthScannerTools, healthScannerHandlers } from './tools/healthScanner.js';
 import { amCoachingTools, amCoachingHandlers } from './tools/amCoaching.js';
+import { competitorScanTools, competitorScanHandlers } from './tools/competitorScan.js';
+import { agencyIntelTools, agencyIntelHandlers } from './tools/agencyIntel.js';
 
 config();
 
@@ -36,6 +38,8 @@ const ALL_TOOLS = [
   ...renewalProofTools,
   ...healthScannerTools,
   ...amCoachingTools,
+  ...competitorScanTools,
+  ...agencyIntelTools,
 ];
 
 const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
@@ -50,6 +54,8 @@ const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
   ...renewalProofHandlers,
   ...healthScannerHandlers,
   ...amCoachingHandlers,
+  ...competitorScanHandlers,
+  ...agencyIntelHandlers,
 };
 
 // ─── MCP Server Factory ───────────────────────────────────────────────────

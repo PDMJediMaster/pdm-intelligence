@@ -286,8 +286,20 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
     Next_Alignment_Call__c?: string;
   }
 
-  // Run account query + refund request query + cancellation request query in parallel
-  const [accounts, allRefundRequests, cancellationRequests] = await Promise.all([
+  // Run account query + refund request query + cancellation request query + CI signals in parallel
+  interface RecentCI {
+    Account__c: string;
+    Sentiment_Label__c?: string;
+    Sentiment_Score__c?: number;
+    Tone_Shift__c?: string;
+    Pause_Cancel_Language__c?: boolean;
+    Competitor_Mentioned__c?: boolean;
+    Satisfaction_Signal__c?: string;
+    Budget_Concern__c?: boolean;
+    Call_Date__c?: string;
+  }
+
+  const [accounts, allRefundRequests, cancellationRequests, recentCIRecords] = await Promise.all([
     salesforceService.rawQuery<ChurnAccount>(
       `SELECT Id, Name, Status__c, OwnerId, Owner.Name,
               Total_Monthly_Recurring_Amount__c, Tier__c,
@@ -325,10 +337,31 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
        ORDER BY Effective_Cancellation_Date__c ASC NULLS LAST
        LIMIT 200`
     ).catch(() => [] as SalesforceCancellationRequest[]),
+
+    // Most recent Call_Intelligence__c per account for sentiment signals
+    salesforceService.rawQuery<RecentCI>(
+      `SELECT Account__c, Sentiment_Label__c, Sentiment_Score__c, Tone_Shift__c,
+              Pause_Cancel_Language__c, Competitor_Mentioned__c, Satisfaction_Signal__c,
+              Budget_Concern__c, Call_Date__c
+       FROM Call_Intelligence__c
+       WHERE Processing_Status__c = 'Processed'
+         AND Call_Date__c >= LAST_N_DAYS:90
+         AND Account__c != null
+       ORDER BY Call_Date__c DESC
+       LIMIT 500`
+    ).catch(() => [] as RecentCI[]),
   ]);
 
   // Build lookup maps
   const refundAccountIds = new Set(allRefundRequests.map((r) => r.Account__c));
+
+  // Build CI lookup — most recent record per account
+  const ciByAccount = new Map<string, RecentCI>();
+  for (const ci of recentCIRecords) {
+    if (!ciByAccount.has(ci.Account__c)) {
+      ciByAccount.set(ci.Account__c, ci); // first = most recent (sorted DESC)
+    }
+  }
   const cancelRequestsByAccount = new Map<string, SalesforceCancellationRequest[]>();
   for (const cr of cancellationRequests) {
     const list = cancelRequestsByAccount.get(cr.Account__c) ?? [];
@@ -389,6 +422,35 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
     if (isDelinquent) {
       score = Math.max(0, score - 30);
       riskFactors.push('💸 Status: Delinquent');
+    }
+
+    // Call Intelligence signals
+    const ci = ciByAccount.get(account.Id);
+    if (ci) {
+      if (ci.Pause_Cancel_Language__c) {
+        score = Math.max(0, score - 20);
+        riskFactors.push('🚨 Pause/cancel language detected in recent call');
+      }
+      if (ci.Sentiment_Label__c === 'Negative') {
+        score = Math.max(0, score - 15);
+        riskFactors.push(`📉 Negative sentiment (${ci.Sentiment_Score__c ?? '?'}/100) in last call`);
+      }
+      if (ci.Tone_Shift__c === 'Declined') {
+        score = Math.max(0, score - 10);
+        riskFactors.push('📉 Tone declined during last call');
+      }
+      if (ci.Satisfaction_Signal__c === 'Frustrated' || ci.Satisfaction_Signal__c === 'Escalation Risk') {
+        score = Math.max(0, score - 15);
+        riskFactors.push(`😡 Client ${ci.Satisfaction_Signal__c?.toLowerCase()} in last call`);
+      }
+      if (ci.Budget_Concern__c) {
+        score = Math.max(0, score - 10);
+        riskFactors.push('💰 Budget concern raised in last call');
+      }
+      if (ci.Competitor_Mentioned__c) {
+        score = Math.max(0, score - 10);
+        riskFactors.push('🏴 Competitor mentioned in last call');
+      }
     }
 
     const hasRefundRequest = refundAccountIds.has(account.Id);

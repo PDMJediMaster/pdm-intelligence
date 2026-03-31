@@ -71,6 +71,9 @@ interface AMStats {
   stalest: { name: string; days: number } | null;
   // Health tiers
   healthy: number; atRisk: number; critical: number; unknown: number;
+  // Call Intelligence sentiment
+  sentimentScores: number[];
+  pauseCancelCallCount: number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -128,8 +131,24 @@ async function handleAMCoachingBrief(rawArgs: unknown): Promise<string> {
 
   const ownerFilter = owner_id ? `AND OwnerId = '${owner_id}'` : '';
 
-  // Parallel: all active accounts + open refund requests
-  const [accounts, refundRequests] = await Promise.all([
+  // Parallel: all active accounts + open refund requests + CI sentiment data
+  interface CISentiment {
+    Account__c: string;
+    Account__r?: { OwnerId?: string };
+    Sentiment_Score__c?: number;
+    Sentiment_Label__c?: string;
+    Pause_Cancel_Language__c?: boolean;
+    SF_Intelligence_Score__c?: number;
+    Call_Duration_Seconds__c?: number;
+    Doctor_Reached__c?: boolean;
+    Key_Topics__c?: string;
+    Satisfaction_Signal__c?: string;
+    Budget_Concern__c?: boolean;
+    Competitor_Mentioned__c?: boolean;
+    Tone_Shift__c?: string;
+  }
+
+  const [accounts, refundRequests, ciSentimentData] = await Promise.all([
     salesforceService.rawQuery<CoachingAccount>(
       `SELECT Id, Name, OwnerId, Owner.Name,
               Status__c, Total_Monthly_Recurring_Amount__c,
@@ -153,6 +172,21 @@ async function handleAMCoachingBrief(rawArgs: unknown): Promise<string> {
        WHERE Status__c != 'Closed' AND Account__c != null
        LIMIT 200`
     ).catch(() => [] as { Account__c: string }[]),
+
+    // Call Intelligence sentiment scores from last 90 days
+    salesforceService.rawQuery<CISentiment>(
+      `SELECT Account__c, Account__r.OwnerId,
+              Sentiment_Score__c, Sentiment_Label__c, Pause_Cancel_Language__c,
+              SF_Intelligence_Score__c, Call_Duration_Seconds__c, Doctor_Reached__c,
+              Key_Topics__c, Satisfaction_Signal__c, Budget_Concern__c,
+              Competitor_Mentioned__c, Tone_Shift__c
+       FROM Call_Intelligence__c
+       WHERE Processing_Status__c = 'Processed'
+         AND Call_Date__c >= LAST_N_DAYS:90
+         AND Account__c != null
+       ORDER BY Call_Date__c DESC
+       LIMIT 1000`
+    ).catch(() => [] as CISentiment[]),
   ]);
 
   if (accounts.length === 0) {
@@ -161,6 +195,16 @@ async function handleAMCoachingBrief(rawArgs: unknown): Promise<string> {
 
   // Build refund set by account ID
   const refundAccountIds = new Set(refundRequests.map((r) => r.Account__c));
+
+  // Build CI sentiment lookup by owner
+  const ciByOwner = new Map<string, CISentiment[]>();
+  for (const ci of ciSentimentData) {
+    const ownerId = ci.Account__r?.OwnerId;
+    if (!ownerId) continue;
+    const list = ciByOwner.get(ownerId) ?? [];
+    list.push(ci);
+    ciByOwner.set(ownerId, list);
+  }
 
   // Group accounts by AM
   const amMap = new Map<string, AMStats>();
@@ -177,6 +221,7 @@ async function handleAMCoachingBrief(rawArgs: unknown): Promise<string> {
         flaggedCount: 0, delinquentCount: 0, cancellationCount: 0, refundCount: 0,
         neverContacted: [], stalest: null,
         healthy: 0, atRisk: 0, critical: 0, unknown: 0,
+        sentimentScores: [], pauseCancelCallCount: 0,
       });
     }
 
@@ -217,6 +262,16 @@ async function handleAMCoachingBrief(rawArgs: unknown): Promise<string> {
   }
 
   // Sort AMs: most critical accounts first (highest risk books)
+  // Populate CI sentiment into AM stats
+  for (const [ownerId, ciList] of ciByOwner) {
+    const am = amMap.get(ownerId);
+    if (!am) continue;
+    for (const ci of ciList) {
+      if (ci.Sentiment_Score__c != null) am.sentimentScores.push(ci.Sentiment_Score__c);
+      if (ci.Pause_Cancel_Language__c) am.pauseCancelCallCount++;
+    }
+  }
+
   const sortedAMs = [...amMap.values()].sort((a, b) => b.critical - a.critical || b.atRisk - a.atRisk);
 
   // ── Team Benchmarks ────────────────────────────────────────────────────
@@ -242,6 +297,10 @@ async function handleAMCoachingBrief(rawArgs: unknown): Promise<string> {
     `- **Total At-Risk Accounts:** ${sortedAMs.reduce((s, a) => s + a.atRisk, 0)} 🟡 | ` +
     `**Critical:** ${sortedAMs.reduce((s, a) => s + a.critical, 0)} 🔴`,
     `- **Open Refund Requests:** ${refundRequests.length} across ${refundAccountIds.size} accounts`,
+    ...(ciSentimentData.length > 0 ? [
+      `- **Call Sentiment (90d):** ${avg(ciSentimentData.filter(c => c.Sentiment_Score__c != null).map(c => c.Sentiment_Score__c!))}/100 avg across ${ciSentimentData.length} processed calls`,
+      `- **Pause/Cancel Language:** ${ciSentimentData.filter(c => c.Pause_Cancel_Language__c).length} calls flagged`,
+    ] : []),
     '',
     '---',
     '',
@@ -301,6 +360,25 @@ async function handleAMCoachingBrief(rawArgs: unknown): Promise<string> {
       lines.push('');
     }
 
+    // Call Intelligence sentiment
+    if (am.sentimentScores.length > 0) {
+      const amSentAvg = avg(am.sentimentScores);
+      const teamSentScores = ciSentimentData.filter(c => c.Sentiment_Score__c != null).map(c => c.Sentiment_Score__c!);
+      const teamSentAvg = teamSentScores.length > 0 ? avg(teamSentScores) : 0;
+      const sentVsTeam = amSentAvg - teamSentAvg;
+      const sentVsStr = sentVsTeam >= 0 ? `+${sentVsTeam}` : `${sentVsTeam}`;
+      const sentBadge = amSentAvg >= 70 ? '🟢' : amSentAvg >= 40 ? '🟡' : '🔴';
+
+      lines.push(`### 🧠 Call Sentiment (90d)`);
+      lines.push(
+        `- **Avg Sentiment:** ${sentBadge} ${amSentAvg}/100 (${sentVsStr} vs team) — ${am.sentimentScores.length} calls analyzed`
+      );
+      if (am.pauseCancelCallCount > 0) {
+        lines.push(`- **⚠️ ${am.pauseCancelCallCount} call(s) flagged pause/cancel language**`);
+      }
+      lines.push('');
+    }
+
     // Activity gaps
     if (am.neverContacted.length > 0) {
       lines.push(`### 📵 Never Contacted (${am.neverContacted.length})`);
@@ -334,6 +412,18 @@ async function handleAMCoachingBrief(rawArgs: unknown): Promise<string> {
         `Schedule a 1:1 to review engagement cadence and client health strategy.`
       );
     }
+    if (am.sentimentScores.length > 0 && avg(am.sentimentScores) < 40) {
+      callouts.push(
+        `Call sentiment is critically low (${avg(am.sentimentScores)}/100). ` +
+        `Review recent call recordings and coach on tone, empathy, and value delivery.`
+      );
+    }
+    if (am.pauseCancelCallCount >= 2) {
+      callouts.push(
+        `${am.pauseCancelCallCount} calls flagged pause/cancel language in 90 days. ` +
+        `Review these accounts immediately for save play opportunities.`
+      );
+    }
     if (callouts.length > 0) {
       lines.push(`### 💡 Coaching Notes`);
       for (const c of callouts) lines.push(`- ${c}`);
@@ -347,8 +437,8 @@ async function handleAMCoachingBrief(rawArgs: unknown): Promise<string> {
   // ── Team Leaderboard ───────────────────────────────────────────────────
   lines.push('## 📊 Team Leaderboard');
   lines.push('');
-  lines.push('| AM | Accounts | MRR | Avg Health | 🟢 | 🟡 | 🔴 | Doctor 30d | Refunds |');
-  lines.push('|---|---|---|---|---|---|---|---|---|');
+  lines.push('| AM | Accounts | MRR | Avg Health | 🟢 | 🟡 | 🔴 | Doctor 30d | Sentiment | Refunds |');
+  lines.push('|---|---|---|---|---|---|---|---|---|---|');
 
   const leaderboard = [...sortedAMs].sort((a, b) => avg(b.healthScores) - avg(a.healthScores));
   for (const am of leaderboard) {
@@ -358,8 +448,124 @@ async function handleAMCoachingBrief(rawArgs: unknown): Promise<string> {
       `| ${am.ownerName} | ${am.accounts.length} | ${mrr} | ${amAvg}/100 | ` +
       `${am.healthy} | ${am.atRisk} | ${am.critical} | ` +
       `${am.doctorWithin30} (${pct(am.doctorWithin30, am.accounts.length)}) | ` +
+      `${am.sentimentScores.length > 0 ? `${avg(am.sentimentScores)}/100` : '—'} | ` +
       `${am.refundCount} |`
     );
+  }
+
+  // ── Call Pattern Analysis: High vs Low Scoring Calls ─────────────────────
+  const scoredCalls = ciSentimentData.filter(c => c.SF_Intelligence_Score__c != null);
+  const highCalls = scoredCalls.filter(c => c.SF_Intelligence_Score__c! >= 70);
+  const lowCalls  = scoredCalls.filter(c => c.SF_Intelligence_Score__c! < 50);
+
+  if (highCalls.length >= 3 || lowCalls.length >= 3) {
+    lines.push('');
+    lines.push('## 🔬 Call Pattern Analysis — High vs. Low Scoring Calls (90d)');
+    lines.push('');
+
+    const analyzeGroup = (calls: CISentiment[]) => {
+      const durations = calls.filter(c => c.Call_Duration_Seconds__c != null).map(c => c.Call_Duration_Seconds__c!);
+      const avgDuration = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0;
+      const doctorReached = calls.filter(c => c.Doctor_Reached__c).length;
+      const budgetConcern = calls.filter(c => c.Budget_Concern__c).length;
+      const competitorMentioned = calls.filter(c => c.Competitor_Mentioned__c).length;
+      const pauseCancel = calls.filter(c => c.Pause_Cancel_Language__c).length;
+
+      const satisfactionCounts: Record<string, number> = {};
+      for (const c of calls) {
+        const sig = c.Satisfaction_Signal__c ?? 'Unknown';
+        satisfactionCounts[sig] = (satisfactionCounts[sig] ?? 0) + 1;
+      }
+
+      const toneShiftCounts: Record<string, number> = {};
+      for (const c of calls) {
+        const tone = c.Tone_Shift__c ?? 'N/A';
+        toneShiftCounts[tone] = (toneShiftCounts[tone] ?? 0) + 1;
+      }
+
+      // Extract top topics across all calls
+      const topicFreq: Record<string, number> = {};
+      for (const c of calls) {
+        if (!c.Key_Topics__c) continue;
+        const topics = c.Key_Topics__c.split(/[,;|\n]/).map(t => t.trim().toLowerCase()).filter(Boolean);
+        for (const t of topics) topicFreq[t] = (topicFreq[t] ?? 0) + 1;
+      }
+      const topTopics = Object.entries(topicFreq).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+      return { avgDuration, doctorReached, budgetConcern, competitorMentioned, pauseCancel, satisfactionCounts, toneShiftCounts, topTopics, total: calls.length };
+    };
+
+    const high = analyzeGroup(highCalls);
+    const low  = analyzeGroup(lowCalls);
+
+    const fmtMin = (sec: number) => sec > 0 ? `${Math.round(sec / 60)}m` : '—';
+    const fmtPct = (n: number, total: number) => total > 0 ? `${Math.round((n / total) * 100)}%` : '—';
+
+    lines.push(`| Metric | High Score (≥70) | Low Score (<50) | Delta |`);
+    lines.push(`|---|---|---|---|`);
+    lines.push(`| **Calls Analyzed** | ${high.total} | ${low.total} | — |`);
+    lines.push(`| **Avg Duration** | ${fmtMin(high.avgDuration)} | ${fmtMin(low.avgDuration)} | ${high.avgDuration > 0 && low.avgDuration > 0 ? `${Math.round((high.avgDuration - low.avgDuration) / 60)}m` : '—'} |`);
+    lines.push(`| **Doctor Reached** | ${fmtPct(high.doctorReached, high.total)} | ${fmtPct(low.doctorReached, low.total)} | ${high.total > 0 && low.total > 0 ? `${Math.round((high.doctorReached / high.total - low.doctorReached / low.total) * 100)}pp` : '—'} |`);
+    lines.push(`| **Budget Concern** | ${fmtPct(high.budgetConcern, high.total)} | ${fmtPct(low.budgetConcern, low.total)} | — |`);
+    lines.push(`| **Competitor Mentioned** | ${fmtPct(high.competitorMentioned, high.total)} | ${fmtPct(low.competitorMentioned, low.total)} | — |`);
+    lines.push(`| **Pause/Cancel Language** | ${fmtPct(high.pauseCancel, high.total)} | ${fmtPct(low.pauseCancel, low.total)} | — |`);
+    lines.push('');
+
+    // Tone shift comparison
+    lines.push('### Tone Shift Distribution');
+    lines.push(`| Tone Shift | High Score Calls | Low Score Calls |`);
+    lines.push(`|---|---|---|`);
+    for (const tone of ['Improved', 'Stable', 'Declined', 'N/A']) {
+      lines.push(`| ${tone} | ${fmtPct(high.toneShiftCounts[tone] ?? 0, high.total)} | ${fmtPct(low.toneShiftCounts[tone] ?? 0, low.total)} |`);
+    }
+    lines.push('');
+
+    // Satisfaction signal comparison
+    lines.push('### Satisfaction Signals');
+    lines.push(`| Signal | High Score Calls | Low Score Calls |`);
+    lines.push(`|---|---|---|`);
+    for (const sig of ['Satisfied', 'Neutral', 'Frustrated', 'Escalation Risk']) {
+      lines.push(`| ${sig} | ${fmtPct(high.satisfactionCounts[sig] ?? 0, high.total)} | ${fmtPct(low.satisfactionCounts[sig] ?? 0, low.total)} |`);
+    }
+    lines.push('');
+
+    // Top topics comparison
+    if (high.topTopics.length > 0 || low.topTopics.length > 0) {
+      lines.push('### Top Topics');
+      lines.push(`| High Score Calls | Low Score Calls |`);
+      lines.push(`|---|---|`);
+      const maxTopics = Math.max(high.topTopics.length, low.topTopics.length);
+      for (let i = 0; i < maxTopics; i++) {
+        const h = high.topTopics[i] ? `${high.topTopics[i][0]} (${high.topTopics[i][1]})` : '—';
+        const l = low.topTopics[i]  ? `${low.topTopics[i][0]} (${low.topTopics[i][1]})` : '—';
+        lines.push(`| ${h} | ${l} |`);
+      }
+      lines.push('');
+    }
+
+    // Coaching insights derived from the comparison
+    const insights: string[] = [];
+    if (high.avgDuration > 0 && low.avgDuration > 0 && high.avgDuration > low.avgDuration * 1.2) {
+      insights.push(`High-scoring calls average **${Math.round(high.avgDuration / 60)}min** vs **${Math.round(low.avgDuration / 60)}min** for low. Longer conversations correlate with better outcomes — coach AMs to stay on the call longer.`);
+    }
+    if (high.total > 0 && low.total > 0 && (high.doctorReached / high.total) > (low.doctorReached / low.total) + 0.15) {
+      insights.push(`Doctor-reached rate is **${fmtPct(high.doctorReached, high.total)}** on high-scoring calls vs **${fmtPct(low.doctorReached, low.total)}** on low. Getting the doctor on the call is a strong predictor of call quality.`);
+    }
+    if (low.total > 0 && low.pauseCancel / low.total > 0.2) {
+      insights.push(`**${fmtPct(low.pauseCancel, low.total)}** of low-scoring calls contain pause/cancel language. These accounts need immediate save play intervention.`);
+    }
+    if (low.total > 0 && low.competitorMentioned / low.total > 0.15) {
+      insights.push(`Competitor mentions appear in **${fmtPct(low.competitorMentioned, low.total)}** of low-scoring calls. Equip AMs with competitive battlecards and proactive positioning.`);
+    }
+    if (low.total > 0 && low.budgetConcern / low.total > 0.25) {
+      insights.push(`Budget concern appears in **${fmtPct(low.budgetConcern, low.total)}** of low-scoring calls. Coach AMs on ROI storytelling and value reinforcement before price discussions.`);
+    }
+
+    if (insights.length > 0) {
+      lines.push('### 💡 Pattern Insights');
+      for (const ins of insights) lines.push(`- ${ins}`);
+      lines.push('');
+    }
   }
 
   return lines.join('\n');
