@@ -981,14 +981,26 @@ async function handleSaveAgencySnapshot(rawArgs: unknown): Promise<string> {
     }
   }
 
-  // ── QUALITY GATE: Reject insufficient client discovery ──────────────────────
-  // The scan instructions define 8 discovery methods. 5-6 clients means only
-  // the homepage was checked. Pattern detection (Method 2) and web footprint
-  // hunting (Method 8) typically find 50-100+ additional clients. This gate
-  // prevents Claude from skipping those high-yield methods.
-  const MIN_CLIENTS = 20;
-  if (discoveredClients.length > 0 && discoveredClients.length < MIN_CLIENTS && !args.bypassMinimum) {
-    return `❌ SAVE REJECTED — Only ${discoveredClients.length} clients submitted. Minimum is ${MIN_CLIENTS}.
+  // ── QUALITY GATE: Dynamic threshold based on estimated client count ─────────
+  // The old static minimum of 20 caused Claude Chat to stop at exactly 20.
+  // Now the gate is dynamic: if you claim 150 clients exist, finding 20 is 13% — rejected.
+  // Minimum is 30% of estimatedClientCount (floor of 20, cap of 100).
+  const FLOOR_MIN = 20;
+  const THOROUGHNESS_TARGET = 0.30; // 30% of estimated = minimum to accept
+  const estimated = args.estimatedClientCount || 0;
+  const dynamicMin = estimated > 0
+    ? Math.max(FLOOR_MIN, Math.min(100, Math.ceil(estimated * THOROUGHNESS_TARGET)))
+    : FLOOR_MIN;
+  const thoroughnessPercent = estimated > 0
+    ? Math.round((discoveredClients.length / estimated) * 100)
+    : null;
+
+  if (discoveredClients.length > 0 && discoveredClients.length < dynamicMin && !args.bypassMinimum) {
+    const thoroughnessMsg = thoroughnessPercent !== null
+      ? `\n\n📊 **Scan Thoroughness: ${thoroughnessPercent}%** — You found ${discoveredClients.length} of an estimated ${estimated} clients. That is not enough.`
+      : '';
+
+    return `❌ SAVE REJECTED — Only ${discoveredClients.length} clients submitted. Minimum for this agency is ${dynamicMin}${estimated > 0 ? ` (30% of ~${estimated} estimated clients)` : ''}.${thoroughnessMsg}
 
 Your scan is incomplete. You likely only checked the agency homepage and found the obvious names. That is Step 1 of 8 methods.
 
@@ -1008,8 +1020,10 @@ Your scan is incomplete. You likely only checked the agency homepage and found t
 
 4. **METHODS 3-6:** Social media posts tagging clients, Google review text mining, search engine discovery, Meta Ad Library.
 
-**Do NOT call sf_save_agency_snapshot again until you have ${MIN_CLIENTS}+ clients with full contact data.**
-If this agency genuinely has fewer than ${MIN_CLIENTS} discoverable clients, include a note explaining what methods you tried and why yields were low, then call again with bypassMinimum: true.`;
+5. **Google Cache / Site Index:** If the agency uses shared domains (e.g. localdentalimplants.dentist), search Google with \`site:domain.tld\` to find all indexed pages — even if the domain itself is not directly browsable. Google's index often reveals 50-100+ client pages on shared funnel domains.
+
+**Do NOT call sf_save_agency_snapshot again until you have ${dynamicMin}+ clients with full contact data.**
+If this agency genuinely has fewer than ${dynamicMin} discoverable clients, include a note explaining what methods you tried and why yields were low, then call again with bypassMinimum: true.`;
   }
 
   // ── DATA COMPLETENESS CHECK ──────────────────────────────────────────────────
@@ -1453,6 +1467,19 @@ If this agency genuinely has fewer than ${MIN_CLIENTS} discoverable clients, inc
   if (args.competitivePressureScore !== undefined) {
     const emoji = args.competitivePressureScore >= 75 ? '🔴' : args.competitivePressureScore >= 50 ? '🟠' : args.competitivePressureScore >= 25 ? '🟡' : '🟢';
     lines.push(`| **Threat Score** | ${emoji} ${args.competitivePressureScore}/100 |`);
+  }
+  // Scan thoroughness
+  if (discoveredClients.length > 0) {
+    const scanThoroughness = estimated > 0
+      ? Math.round((discoveredClients.length / estimated) * 100)
+      : null;
+    const thoroughnessLabel = scanThoroughness !== null
+      ? (scanThoroughness >= 60 ? '🟢 Deep' : scanThoroughness >= 30 ? '🟡 Moderate' : '🔴 Shallow')
+      : '⚪ Unknown (no estimate provided)';
+    const thoroughnessValue = scanThoroughness !== null
+      ? `${thoroughnessLabel} — ${discoveredClients.length} found / ~${estimated} estimated (${scanThoroughness}%)`
+      : `${thoroughnessLabel} — ${discoveredClients.length} clients found`;
+    lines.push(`| **Scan Thoroughness** | ${thoroughnessValue} |`);
   }
   lines.push('');
 
