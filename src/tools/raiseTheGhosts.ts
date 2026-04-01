@@ -895,6 +895,45 @@ Try adjusting:
   lines.push('- **attendees:** The Sales Rep(s) who own these ghosts');
   lines.push('');
 
+  // ── Machine-readable JSON for n8n workflow parsing ─────────────────────
+  // Same pattern as SCAN_RESULT in sf_run_nightly_health_scan.
+  // n8n extracts this via regex: /GHOST_RESULT:({.*})/
+  const ghostResult = {
+    date: new Date().toISOString().split('T')[0],
+    totalGhosts: finalGhosts.length,
+    totalFiltered: ghosts.length - filteredGhosts.length,
+    opportunities: finalGhosts.filter(g => g.type === 'opportunity').length,
+    prospects: finalGhosts.filter(g => g.type === 'prospect_account').length,
+    leads: finalGhosts.filter(g => g.type === 'lead').length,
+    avgDaysSilent: finalGhosts.length > 0
+      ? Math.round(finalGhosts.reduce((s, g) => s + g.daysSilent, 0) / finalGhosts.length)
+      : 0,
+    revivalsCreated: revivalRecords.length,
+    revivalErrors: revivalErrors.length,
+    // Per-rep breakdown for email routing
+    repSummaries: [...repGroups.entries()].map(([repName, repGhosts]) => ({
+      repName,
+      repEmail: repGhosts[0]?.ownerEmail || null,
+      ghostCount: repGhosts.length,
+      ghosts: repGhosts.map(g => ({
+        accountName: g.accountName,
+        contactName: g.contactName || null,
+        contactEmail: g.contactEmail || null,
+        daysSilent: g.daysSilent,
+        type: g.type,
+        lastCallTopic: g.lastCallTopic || null,
+        painPoints: g.painPoints,
+        coldReason: g.likelyReasonCold,
+        reEngagementAngle: g.reEngagementAngle,
+        articleSearchQuery: g.articleSearchQuery,
+        sfLink: g.sfLink,
+        revivalId: revivalRecords.find(r => r.ghost === g)?.revivalId || null,
+      })),
+    })),
+  };
+  lines.push('');
+  lines.push(`GHOST_RESULT:${JSON.stringify(ghostResult)}`);
+
   return lines.join('\n');
 }
 
