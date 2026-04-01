@@ -91,6 +91,10 @@ interface GhostProfile {
   opportunityName?: string;
   opportunityStage?: string;
   opportunityAmount?: number;
+  // Salesforce lookup IDs for Pipeline_Revival__c
+  contactId?: string;
+  videoCallId?: string;
+  callIntelligenceId?: string;
   // Owner / Rep
   ownerId: string;
   ownerName: string;
@@ -436,6 +440,9 @@ async function handleRaiseTheGhosts(rawArgs: unknown): Promise<string> {
       opportunityName: extra.opportunityName,
       opportunityStage: extra.opportunityStage,
       opportunityAmount: extra.opportunityAmount,
+      contactId: bestContact?.Id,
+      videoCallId: lastVC?.Id,
+      callIntelligenceId: lastCI?.Id,
       ownerId,
       ownerName,
       ownerEmail,
@@ -533,6 +540,95 @@ async function handleRaiseTheGhosts(rawArgs: unknown): Promise<string> {
   // Cap to limit
   const finalGhosts = ghosts.slice(0, limit);
 
+  // ── Write Pipeline_Revival__c records to Salesforce ───────────────────
+  const scanBatch = new Date().toISOString().split('T')[0]; // e.g. "2026-04-01"
+  const revivalRecords: Array<{ ghost: GhostProfile; revivalId: string }> = [];
+  const revivalErrors: string[] = [];
+
+  const ghostTypeMap: Record<string, string> = {
+    opportunity: 'Open Deal',
+    prospect_account: 'TCI Prospect',
+    lead: 'Cold Lead',
+  };
+
+  const coldReasonMap: Record<string, string> = {
+    'Budget/pricing': 'Budget/Pricing',
+    'time to think': 'Stall - Need to Think',
+    'Competitor': 'Competitor/Other Agency',
+    'Timing': 'Timing/Bandwidth',
+    'no next step': 'No Next Step Locked',
+  };
+
+  function mapColdReason(detail: string): string {
+    const lower = detail.toLowerCase();
+    if (lower.includes('budget') || lower.includes('pricing') || lower.includes('cost')) return 'Budget/Pricing';
+    if (lower.includes('think') || lower.includes('discuss') || lower.includes('partner') || lower.includes('stall')) return 'Stall - Need to Think';
+    if (lower.includes('competitor') || lower.includes('other agency') || lower.includes('evaluating')) return 'Competitor/Other Agency';
+    if (lower.includes('timing') || lower.includes('busy') || lower.includes('bandwidth')) return 'Timing/Bandwidth';
+    if (lower.includes('no follow-up') || lower.includes('next step') || lower.includes('forgot')) return 'No Next Step Locked';
+    return 'Unknown';
+  }
+
+  function mapTouchpointType(ghost: GhostProfile): string {
+    if (ghost.lastCallTopic) return 'Video Call';
+    if (ghost.lastEmailSubject) return 'Email';
+    if (ghost.lastTaskSubject) return 'Task';
+    return 'Task';
+  }
+
+  // Create records in parallel (batches of 10 to avoid API limits)
+  for (let i = 0; i < finalGhosts.length; i += 10) {
+    const batch = finalGhosts.slice(i, i + 10);
+    const results = await Promise.allSettled(
+      batch.map(ghost => {
+        // Build touchpoint summary from all available intelligence
+        const summaryParts: string[] = [];
+        if (ghost.lastCallTopic) summaryParts.push(`Call: ${ghost.lastCallTopic}`);
+        if (ghost.lastCallSummary) summaryParts.push(`AI Summary: ${ghost.lastCallSummary.substring(0, 2000)}`);
+        if (ghost.lastCallKeyTopics) summaryParts.push(`Topics: ${ghost.lastCallKeyTopics}`);
+        if (ghost.lastCallCommitments) summaryParts.push(`Commitments: ${ghost.lastCallCommitments}`);
+        if (ghost.lastTaskDescription && !ghost.lastCallSummary) summaryParts.push(`Notes: ${ghost.lastTaskDescription.substring(0, 1500)}`);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const fields: Record<string, any> = {
+          Name: `${ghost.accountName} — ${ghost.daysSilent}d silent`.substring(0, 80),
+          Ghost_Type__c: ghostTypeMap[ghost.type] || 'Cold Lead',
+          Sales_Rep__c: ghost.ownerId,
+          Days_Silent__c: ghost.daysSilent,
+          Date_Identified__c: new Date().toISOString(),
+          Last_Touchpoint_Date__c: ghost.lastCallDate || ghost.lastActivityDate || null,
+          Last_Touchpoint_Type__c: mapTouchpointType(ghost),
+          Last_Touchpoint_Summary__c: summaryParts.join('\n\n').substring(0, 5000) || null,
+          Pain_Points__c: ghost.painPoints.join('\n').substring(0, 2000) || null,
+          Cold_Reason__c: mapColdReason(ghost.likelyReasonCold),
+          Cold_Reason_Detail__c: ghost.likelyReasonCold.substring(0, 2000),
+          Re_Engagement_Strategy__c: ghost.reEngagementAngle.substring(0, 3000),
+          Status__c: 'Identified',
+          Scan_Batch__c: scanBatch,
+        };
+
+        // Lookups (only set if we have IDs)
+        if (ghost.type !== 'lead' && ghost.accountId) fields.Account__c = ghost.accountId;
+        if (ghost.type === 'lead') fields.Lead__c = ghost.recordId;
+        if (ghost.type === 'opportunity') fields.Opportunity__c = ghost.recordId;
+        if (ghost.contactId) fields.Contact__c = ghost.contactId;
+        if (ghost.videoCallId) fields.Video_Call__c = ghost.videoCallId;
+        if (ghost.callIntelligenceId) fields.Call_Intelligence__c = ghost.callIntelligenceId;
+
+        return salesforceService.createRecord('Pipeline_Revival__c', fields)
+          .then(id => ({ ghost, id }));
+      })
+    );
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        revivalRecords.push({ ghost: result.value.ghost, revivalId: result.value.id });
+      } else {
+        revivalErrors.push(result.reason instanceof Error ? result.reason.message : String(result.reason));
+      }
+    }
+  }
+
   // ── Build output ──────────────────────────────────────────────────────
   if (finalGhosts.length === 0) {
     return `# 👻 Raise the Ghosts — No Ghosts Found
@@ -594,6 +690,10 @@ Try adjusting:
       lines.push(`💰 Deal: ${ghost.opportunityName} | Stage: ${ghost.opportunityStage || '?'}${ghost.opportunityAmount ? ` | $${ghost.opportunityAmount.toLocaleString()}` : ''}`);
     }
     lines.push(`🔗 ${ghost.sfLink}`);
+    const revival = revivalRecords.find(r => r.ghost === ghost);
+    if (revival) {
+      lines.push(`📋 Pipeline Revival: ${SF_BASE}/lightning/r/Pipeline_Revival__c/${revival.revivalId}/view`);
+    }
     lines.push('');
 
     // Contact info
@@ -695,6 +795,26 @@ Try adjusting:
     lines.push('');
   }
 
+  // ── Pipeline Revival Records Summary ────────────────────────────────
+  lines.push('---');
+  lines.push('## 📋 Pipeline Revival Records');
+  lines.push('');
+  if (revivalRecords.length > 0) {
+    lines.push(`**${revivalRecords.length} Pipeline_Revival__c records created** (Scan Batch: ${scanBatch})`);
+    lines.push('');
+    for (const { ghost, revivalId } of revivalRecords) {
+      lines.push(`- **${ghost.accountName}** → ${SF_BASE}/lightning/r/Pipeline_Revival__c/${revivalId}/view`);
+    }
+    lines.push('');
+    lines.push('Each record is set to **Status: Identified**. Update status as you progress:');
+    lines.push('`Identified` → `Email Drafted` → `Email Sent` → `Reply Received` → `Meeting Booked` → `Re-Engaged`');
+    lines.push('');
+  }
+  if (revivalErrors.length > 0) {
+    lines.push(`> ⚠️ ${revivalErrors.length} records failed to create: ${revivalErrors[0]}`);
+    lines.push('');
+  }
+
   // ── Action Instructions for Claude ────────────────────────────────────
   lines.push('---');
   lines.push('## ⚡ Next Steps — What To Do Now');
@@ -722,7 +842,15 @@ Try adjusting:
   lines.push('- **subject:** [from framework above]');
   lines.push('- **body:** [your drafted email with article]');
   lines.push('');
-  lines.push('**Step 4: Schedule Monthly Review**');
+  lines.push('**Step 4: Update Pipeline Revival Records**');
+  lines.push('After drafting each email, update the Pipeline_Revival__c record:');
+  lines.push('- `Status__c` → `Email Drafted`');
+  lines.push('- `Email_Subject__c` → the subject line');
+  lines.push('- `Email_Draft__c` → the full email body');
+  lines.push('- `Article_URL__c` → the article link');
+  lines.push('- `Article_Title__c` → the article title');
+  lines.push('');
+  lines.push('**Step 5: Schedule Monthly Review**');
   lines.push('Use `gcal_create_event` to create a recurring monthly calendar event:');
   lines.push('- **title:** "Revived Dead Leads — Prophet Review"');
   lines.push('- **date:** 1st of next month, 10:00-11:00 AM');
