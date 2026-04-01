@@ -535,7 +535,7 @@ async function handleScanAgency(rawArgs: unknown): Promise<string> {
 **Type:** AGENCY-LEVEL COMPETITOR (not a dental practice)
 
 > **⚠️ MANDATORY OUTPUT: This scan MUST produce:**
-> 1. **100+ discovered client practices** (use ALL 7 discovery methods in Layer 2)
+> 1. **AS MANY client practices as possible** (use ALL 8 discovery methods in Layer 2 — 100+ is common for large agencies)
 > 2. **Full contact data for every client** (website, phone, email, doctor, city/state/zip — scrub their website)
 > 3. **Service gap analysis and poach lever for every client**
 > 4. **A call to sf_save_agency_snapshot with the full discoveredClients JSON array** — this generates the Excel spreadsheet on Desktop
@@ -585,31 +585,68 @@ Check their blog/resources section
 
 ## 🔍 Layer 2: Client Portfolio Detection
 
-**⚠️ TARGET: 100+ CLIENTS MINIMUM. Do NOT stop at 3-5 clients from a case study page. Use EVERY method below. The goal is to build an exhaustive poach list.**
+**⚠️ TARGET: AS MANY CLIENTS AS POSSIBLE. 100+ is common for large agencies. Do NOT stop at 3-5 clients from a case study page. Use EVERY method below. The goal is to build an exhaustive poach list.**
+
+**⚠️ CRITICAL WORKFLOW: PATTERN-FIRST DISCOVERY**
+The #1 reason scans fail is starting and stopping at the agency homepage. The homepage might only name 5-6 clients. The real client list is 10x-100x larger. Here's how you find them:
+
+1. **FIRST** — Visit the agency website and find 3-5 CONFIRMED client websites (testimonials, case studies, portfolio)
+2. **THEN** — Visit each confirmed client's website. Study the patterns:
+   - What does the website template look like? (layout, color scheme, navigation structure)
+   - What funnel type? (quiz funnel, appointment form, free consultation CTA)
+   - Check the HTML source for: agency footer credits, Google Analytics IDs, Tag Manager IDs, meta generator tags, unique CSS class names, JavaScript framework signatures, hosting patterns
+   - What domain registrar / hosting / CDN patterns do they share?
+3. **THEN** — Search Google for OTHER dental websites matching those patterns. This is where you go from 5 clients to 50-100+.
+4. **THEN** — For every match found, verify it's actually a client (check for template match + funnel type + any agency fingerprint)
+5. **FINALLY** — Scrub each verified client's website for full contact data
+
+**A previous DIM scan found 108 clients using this exact workflow.** The quiz funnel pattern + template signature was the key. Do not skip pattern identification.
 
 ### 5. Client Portfolio Discovery — EXHAUSTIVE SEARCH
 
-**METHOD 1: Agency Website (expect 5-20 clients)**
-- ${agencyWebsite ? agencyWebsite : 'Agency website'}/portfolio or /our-work or /case-studies or /clients or /results or /success-stories
-- Testimonials page — extract EVERY practice name, doctor name, location
+**METHOD 1: Agency Website — Confirmed Clients (expect 5-20 clients)**
+- Navigate EVERY page: ${agencyWebsite ? agencyWebsite : 'Agency website'}/portfolio, /our-work, /case-studies, /clients, /results, /success-stories, /testimonials, /about
+- Testimonials — extract EVERY practice name, doctor name, location
 - Case study pages — extract practice name, location, services provided
-- Footer logos or "trusted by" sections — screenshot and identify each logo
+- Footer logos or "trusted by" sections — identify each logo (Google reverse image search if needed)
 - Blog posts mentioning specific client results, launches, or milestones
 - Press releases mentioning clients
 - Pricing page — sometimes shows client logos
+- **CRITICAL: Visit every confirmed client's website — you need their site patterns for METHOD 2**
 
-**METHOD 2: Footer Credit / Template Detection (expect 20-80+ clients — THIS IS THE GOLDMINE)**
+**METHOD 2: Template Detection + Web Footprint Hunting (expect 20-100+ clients — THIS IS THE GOLDMINE)**
+
+**Step A — Identify the agency's digital fingerprint:**
+Visit 3+ confirmed client websites and look for SHARED patterns:
+- Website template: layout structure, navigation style, hero section design, color schemes
+- Funnel type: quiz funnels ("Are you a candidate?"), free consultation forms, specific CTA language
+- Footer credits: "website by ${agencyName}", "powered by ${agencyName}", "designed by ${agencyName}"
+- **HTML source patterns (view source on each client site):**
+  - Google Analytics / GA4 Measurement ID (shared across clients = agency-managed)
+  - Google Tag Manager container ID (GTM-XXXXXXX)
+  - Meta generator tags
+  - Unique CSS class names or framework identifiers
+  - JavaScript libraries or custom scripts loaded from agency domains
+  - Schema markup patterns (same Organization schema across client sites)
+  - CDN or image hosting patterns (shared S3 bucket, agency CDN)
+  - Chatbot or scheduling widget (same vendor widget code across sites)
+  - Hosting provider / nameserver patterns (dig or whois patterns)
+
+**Step B — Search the web for sites matching that fingerprint:**
 - Search: **"website by ${agencyName}"** or **"powered by ${agencyName}"** or **"designed by ${agencyName}"**
 - Search: **"${agencyWebsite ? new URL(agencyWebsite).hostname : agencyName}" dental** to find sites linking back
-- Search: site:*.com **"${agencyName}"** footer credit
-- If you find ONE client's website, examine the HTML source for template patterns, then search for other sites using the same:
-  - Website template / design framework / CSS patterns
-  - Google Analytics or Tag Manager container IDs (shared across agency clients)
-  - Schema markup patterns unique to this agency
-  - Hosting provider + nameserver patterns
-  - Meta generator tags
-- Once you identify the template signature, search Google for other dental sites matching it
-- **This method found 108 clients for DIM in a previous scan — it works. Use it.**
+- Search: site:*.com **"${agencyName}"** footer
+- If you found a shared Google Analytics ID: search for that ID to find all sites using it
+- If you found a shared GTM container: search for that container ID
+- If you found a unique CSS class or framework name: search for it
+- If you identified a funnel type (e.g., quiz funnel with specific language): search for that exact CTA text or quiz format on other dental sites
+- Search for dental implant practices with matching website patterns in different cities
+- **Every match = a likely client. Visit each to confirm the pattern + extract contact data.**
+
+**Step C — Snowball expansion:**
+- Each new confirmed client site may reveal ADDITIONAL patterns you missed
+- Check if confirmed clients link to each other, share reviews, or appear in the same directories
+- Search Google for the practice names you've confirmed + "${agencyName}" to find more connections
 
 **METHOD 3: Social Media Mining (expect 10-30 clients)**
 - Facebook: scroll through ${agencyName}'s posts — they tag client practices in launch posts, milestone posts, before/after showcases
@@ -636,22 +673,39 @@ Check their blog/resources section
 - Search: **"${agencyName}" "dental implant" OR "dentist" OR "oral surgeon"**
 - Search: **"${agencyName}" client OR partner OR "proud to serve"**
 - Google News: **"${agencyName}" dental** — press releases, awards, features
+- Search: **"${agencyName}" podcast OR webinar OR interview** — agency leaders often name-drop clients in media appearances
 
 **METHOD 6: Ad Intelligence (expect 5-20 clients)**
 - Meta Ad Library: search "${agencyName}" — their clients' ads often credit the agency
+- Also search the Ad Library for EACH confirmed client practice — if they're running ads, check if the landing page uses the agency template
 - Search Google for dental implant ads in major markets — check if landing pages have agency footprints
 - If the agency runs Facebook ads for clients, the Ad Library shows the page name = client
+- Google Ads Transparency Center: search agency name or client names
 
 **METHOD 7: Homepage Image / Award Page / Video Mining — MANDATORY**
 ⚠️ DO NOT SKIP. Competitors showcase clients visually — doctor photos, award winners, video thumbnails. This is a HIGH-YIELD discovery method.
 - **Homepage hero section**: Look for doctor photos with names, "featured clients", "success stories", rotating testimonial carousels
-- **Award / results walls**: Many agencies display "Two Comma Club" winners, "$1M+" producers, case study features — each with a doctor's name and sometimes practice name. Screenshot and read EVERY name visible.
+- **Award / results walls**: Many agencies display "Two Comma Club" winners, "$1M+" producers, case study features — each with a doctor's name and sometimes practice name. Read EVERY name visible.
 - **Video sections / YouTube embeds**: Video thumbnails often show "Dr. [Name] — [Practice Name]" or "[Practice] Journey". Read every thumbnail caption and video title.
 - **Testimonial pages**: Doctor headshots with quotes always include names. Read ALL of them.
 - **"Our Clients" / "Results" / "Case Studies" pages**: Navigate to every page that could list client names or logos
-- **YouTube channel**: Visit the agency's YouTube — video titles contain client names (e.g., "Dr. Aman Bhullar — The GlenDental | Office Journey")
-- For EACH doctor name extracted from images: Google search "[Dr. Name] dentist" to find their practice, website, city, state, phone, email
+- **YouTube channel**: Visit the agency's YouTube — video titles contain client names (e.g., "Dr. Aman Bhullar — The GlenDental | Office Journey"). Go through ALL videos, not just the first page.
+- For EACH doctor name extracted: Google search "[Dr. Name] dentist" to find their practice, website, city, state, phone, email
 - **Accuracy rule**: Only record names you can clearly read. If a photo is blurry or a name is partially obscured, note it as uncertain. Quality over quantity.
+
+**METHOD 8: Pattern Matching — Dental Practices Matching Client Profile (expect 10-50 clients)**
+After completing Methods 1-7, you know what a typical ${agencyName} client looks like:
+- What specialties? (implants, full-arch, cosmetic, general)
+- What markets? (city sizes, regions)
+- What funnel type? (quiz, consultation, specific CTA language)
+- What website template features?
+Now search for dental practices in similar markets that match the SAME profile:
+- Similar website template or funnel structure
+- Similar service mix and positioning
+- Located in markets where ${agencyName} has other clients (agencies cluster geographically)
+- Running similar ad strategies (Meta Ad Library, Google Ads)
+- Mark these as **"Pattern Match — Likely Client"** or **"Pattern Match — Potential Prospect"** in the Funnel Type column
+- These are high-value poach targets even if you can't confirm the agency relationship — they FIT the profile
 
 ### 📋 MANDATORY: Website Scrub for EVERY Discovered Client
 
