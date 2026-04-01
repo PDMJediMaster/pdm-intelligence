@@ -616,18 +616,45 @@ The #1 reason scans fail is starting and stopping at the agency homepage. The ho
 
 **A previous DIM scan found 147 clients using this workflow.** DIM has three client tiers: Duda-platform websites (searchable via "DM_DIRECT" in source), WordPress+Elementor sites (searchable via "Designed by Dental Implant Machine" footer), and marketing-only clients (found via awards, case studies, reviews). You must look for ALL tiers.
 
-**Known agency platform fingerprints (use these as EXAMPLES of what to look for):**
-| Agency | Platform | Search Signature |
-|---|---|---|
-| Dental Implant Machine | Duda (white-label "DFP") | \`"DM_DIRECT"\` or \`"multiscreensite.com"\` or \`"dmRespRow"\` in page source |
-| Dental Implant Machine | WordPress + Elementor | \`"Designed by Dental Implant Machine"\` in footer |
-| Dental Implant Machine | Quiz funnel | \`"60-second quiz"\` or \`"60-Second Quiz"\` dental implant |
-| Dental Implant Machine | CRM portal | \`"app.theimplantmachine.com"\` (GoHighLevel white-label) |
-| Any agency | Footer credit | \`"designed by [agency]"\` or \`"powered by [agency]"\` or \`"website by [agency]"\` |
-| Any agency | Shared analytics | Search for the GTM-XXXXXXX or G-XXXXXXX ID found on confirmed client sites |
-| Any agency | CMS signature | Check for shared meta generator tags, CSS framework class prefixes, CDN domains |
+**Known agency platform fingerprints — CONFIRMED from live scans of real client sites:**
 
-**For ${agencyName} specifically:** After visiting 3+ confirmed client sites, BUILD YOUR OWN fingerprint table like the one above. Then search for EACH fingerprint across the web.
+**IMPORTANT: If ${agencyName} matches one of these agencies, USE THESE EXACT SIGNATURES to find clients. If it's a NEW agency, build your own table using the same methodology.**
+
+| Agency | Detection Method | Search Signature | Expected Yield |
+|---|---|---|---|
+| **Dental Implant Machine** | Duda DFP platform | \`"DM_DIRECT"\` or \`"multiscreensite.com"\` or \`"dmRespRow"\` in source | Tier 1 website clients |
+| **Dental Implant Machine** | WordPress footer | \`"Designed by Dental Implant Machine"\` in footer | Tier 2 WP clients |
+| **Dental Implant Machine** | Quiz funnel CTA | \`"60-second quiz"\` or \`"Take this 60-Second Quiz"\` dental | Funnel clients |
+| **Dental Implant Machine** | CRM portal | \`"app.theimplantmachine.com"\` references | GoHighLevel clients |
+| **Lasso MD** | Footer backlink | \`href="https://lassomd.com"\` in page source (hidden link) | HIGH — present on every Lasso site |
+| **Lasso MD** | PatientLoop software | \`"cdn.patientloop.com"\` in page source | HIGH — Lasso's proprietary growth tool |
+| **Lasso MD** | Webflow + GSAP stack | Webflow site + \`"cdn.prod.website-files.com"\` + GSAP/Swiper.js | Confirm with footer link |
+| **Lasso MD** | CSS classes | \`"testimonials_slider"\`, \`"faq_toggle"\`, \`"reveal-circle"\` | Template-specific |
+| **Implant Engine** | Shared funnel domain | \`site:localdentalimplants.dentist\` — each practice has a page here | VERY HIGH — 15+ clients on one domain |
+| **Implant Engine** | Funnel subdomain | \`[practice].implant-info.com\` pattern | GoHighLevel funnels |
+| **Implant Engine** | GHL CSS classes | \`"hl_page-preview"\`, \`"hl_main_popup"\`, \`"filesafe.space"\` | GHL-built funnels |
+| **Implant Engine** | LeadConnector chat | \`"leadConnector"\` or \`"openGHLChat"\` in page source | Treatment Setters integration |
+| **Implant Engine** | Parent company | \`"Delmain"\` or \`"delmain.co"\` references | Corporate connection |
+| **DentalROI** | Azure CDN | \`"droi.azureedge.net"\` in page source | VERY HIGH — agency-wide shared CDN |
+| **DentalROI** | Azure Blob Storage | \`"[name].blob.core.windows.net"\` on dental sites | Custom ASP.NET platform |
+| **DentalROI** | Footer credit | \`"Dental Marketing by"\` + DentalROI logo linking to \`dentalroi.com\` | Direct attribution |
+| **DentalROI** | ASP.NET URL pattern | URL routes like \`/Blog/Post/\`, \`/Form/Fill/\` (not WordPress slugs) | Platform signature |
+| **Driven Dental** | NO website fingerprint | Driven Dental is media buying + VPA only — they do NOT build websites | Must use non-web methods |
+| **Driven Dental** | GoHighLevel subdomains | \`link.[practicename].com\` pattern for campaign landing pages | GHL white-label |
+| **Driven Dental** | Testimonials page | \`drivendentalmarketing.com/reviews\` lists clients by name/location | Direct client list |
+| **Driven Dental** | VPA branding | \`"Virtual Patient Advocate"\` or \`"Virtual Patient Acquisition"\` | Unique program name |
+| **Implant Prospects** | Footer credit | \`"Powered by Implant Prospect"\` in footer | Present on some sites |
+| **Implant Prospects** | Parent company | \`"Carvalho Capital"\` or \`"Thiago Carvalho"\` dental | PE acquisition model |
+| **Any agency** | Footer credit | \`"designed by [agency]"\` or \`"powered by [agency]"\` or \`"website by [agency]"\` | Universal check |
+| **Any agency** | Shared analytics | Search for the GTM-XXXXXXX or G-XXXXXXX ID found on confirmed client sites | Shared = agency-managed |
+| **Any agency** | CMS signature | Check for shared meta generator tags, CSS framework class prefixes, CDN domains | Build your own table |
+
+**Three competitor models to identify (from the "BEAT COMPETITION" framework):**
+1. **Funnel + Call Center model** (DIM, Implant Engine): Quiz funnels, outsourced call centers, financial pre-qualification. Vulnerable to: ad dependency, no SEO/brand, template fatigue, patients remember the offer not the practice.
+2. **Territory Lock model** (Dental Lead Machine): "One practice per market" exclusivity. Vulnerable to: scarcity pressure tactics, inflexibility, trust issues.
+3. **Authority Marketing model** (Driven Dental): Premium patients, educated buyers. Closest to PDM's model — most dangerous long-term competitor.
+
+**For ${agencyName} specifically:** After visiting 3+ confirmed client sites, BUILD YOUR OWN fingerprint table like the ones above. Then search for EACH fingerprint across the web.
 
 ### 5. Client Portfolio Discovery — EXHAUSTIVE SEARCH
 
@@ -792,7 +819,31 @@ Now search for dental practices in similar markets that match the SAME profile:
 
 ## 🔍 Layer 3: "Why Switch to PDM" Analysis
 
-### 6. Service-by-Service Comparison: ${agencyName} vs PDM
+### 6. Identify ${agencyName}'s Competitor Model
+First, classify which model ${agencyName} uses — this determines the kill shots:
+
+**Model A: Funnel + Call Center** (like DIM, Implant Engine)
+- Quiz funnels, outsourced call centers, financial pre-qualification
+- Weaknesses: Ad dependency (pipeline dies when ads stop), no brand equity (patients remember the offer not the practice), template fatigue (clients compete against identical funnels), lead quality degrades over time, no SEO moat
+- PDM kill shot: "They help you BUY patients. We help you OWN your market."
+- Pain points to hit: "Are leads getting more expensive?" / "What happens if ad costs double?" / "If you stopped ads tomorrow, would your pipeline survive?"
+
+**Model B: Territory Lock** (like Dental Lead Machine)
+- "One practice per market" exclusivity pitch
+- Weaknesses: Scarcity pressure tactics, inflexibility, trust erosion, can't scale beyond locked territory
+- PDM kill shot: "Locking a territory doesn't build dominance — owning organic search does."
+
+**Model C: Authority Marketing** (like Driven Dental)
+- Premium patient focus, educated buyers, brand-first
+- Weaknesses: Often narrow service stack (PPC + VPA only), no events/training ecosystem, no AI intelligence layer
+- PDM kill shot: "They build authority in ads. We build authority in everything — SEO, video, events, training, reputation."
+
+**Model D: Full-Service Agency** (like Lasso MD, DentalROI)
+- SEO + PPC + websites + social + content
+- Weaknesses: Often lack implant specialization, no case acceptance training, no conference ecosystem, template-based sites
+- PDM kill shot: "They're a marketing agency. We're an implant growth system — marketing + training + events + AI intelligence."
+
+### 7. Service-by-Service Comparison: ${agencyName} vs PDM
 For EACH service area, compare what ${agencyName} delivers vs. what PDM delivers:
 
 | Service | ${agencyName} Delivers | PDM Delivers | PDM Edge |
@@ -806,9 +857,11 @@ For EACH service area, compare what ${agencyName} delivers vs. what PDM delivers
 | **Branding / Creative** | ? | Professional branded creative, consistent across all channels | ? |
 | **Case Acceptance Training** | ? | TCI Mentorship: staff training on consultation, financing, case acceptance | ? |
 | **Events / Conferences** | ? | TCI Events: 3 major conferences/year, networking, celebrity speakers | ? |
-| **Analytics / ROI** | ? | Health scoring, AI call intelligence, competitive monitoring, renewal proof packages | ? |
+| **Analytics / ROI** | ? | Prophet AI: health scoring, call intelligence, competitive monitoring, renewal proof packages | ? |
+| **Call Center / Setters** | ? | PDM empowers the client's OWN team (TCI training) rather than creating agency dependency | ? |
+| **Client Portal / CRM** | ? | Salesforce Enterprise + Prophet AI intelligence platform | ? |
 
-### 7. Audit Discovered Clients Against PDM Standards
+### 8. Audit Discovered Clients Against PDM Standards
 For each discovered client practice:
 - Quick website audit: modern or dated? Mobile-friendly? Implant pages?
 - Google reviews: count and rating
@@ -817,7 +870,7 @@ For each discovered client practice:
 - Social media activity level
 - **Marketing Maturity Score estimate (0-100)** — how good is the work this agency delivered?
 
-### 8. Where Is ${agencyName} Falling Short?
+### 9. Where Is ${agencyName} Falling Short?
 Identify the pattern across all discovered clients:
 - What services does ${agencyName} consistently underdeliver on?
 - What's the typical quality level of their SEO work? PPC? Social?
@@ -825,6 +878,31 @@ Identify the pattern across all discovered clients:
 - Do their clients have video content? Implant-specific pages?
 - Are their clients showing up in Maps for implant keywords?
 - What's the average estimated maturity of their client book?
+
+### 10. Sales Ammunition — Competitor-Specific Talking Points
+Generate these for the sales team to use immediately:
+
+**Opening line (for outbound to ${agencyName} clients):**
+"Hey Dr. ___ — I was looking at your implant marketing and noticed [specific observation from their site]. A lot of practices using similar systems are starting to see [relevant pain point]. Curious if you're experiencing the same?"
+
+**Pain amplification questions (pick 3 most relevant):**
+- "Are your implant leads getting more expensive over time?"
+- "What percentage of your cases come from ads vs. organic?"
+- "If you stopped ads tomorrow, would your pipeline survive?"
+- "Are you seeing patients shopping price instead of committing?"
+- "Do you feel like you're competing against identical marketing in your market?"
+- "What's your show rate on implant consultations?"
+- "When patients Google you, what do they find beyond the ads?"
+
+**Positioning statement:**
+"Most implant marketing programs are great at generating leads — but they don't build sustainable market ownership. That's where practices plateau. We help practices move from buying implant cases to actually owning their market."
+
+**The PDM unfair advantages to emphasize (vs ${agencyName}):**
+1. **TCI Events** — 3 major conferences/year. No competitor has this. Period.
+2. **TCI Mentorship** — Staff training that stays when the agency leaves. Competitor call centers create dependency.
+3. **Prophet AI** — Call intelligence, health scoring, competitive monitoring, renewal proof. No competitor has an AI platform.
+4. **Full-service stack** — Phase 1 (website, video, creative) + Phase 2 (SEO, PPC, social) + TCI. Competitors typically offer 2-3 of these.
+5. **Owned assets** — PDM builds SEO, reputation, content that the client OWNS. Funnel agencies build assets on agency-controlled domains that disappear when the client leaves.
 
 ---
 
