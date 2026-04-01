@@ -592,17 +592,42 @@ Check their blog/resources section
 **⚠️ CRITICAL WORKFLOW: PATTERN-FIRST DISCOVERY**
 The #1 reason scans fail is starting and stopping at the agency homepage. The homepage might only name 5-6 clients. The real client list is 10x-100x larger. Here's how you find them:
 
-1. **FIRST** — Visit the agency website and find 3-5 CONFIRMED client websites (testimonials, case studies, portfolio)
+**⚠️ IMPORTANT: Most agencies have MULTIPLE client tiers. You must search for ALL of them:**
+- **Tier 1: Full-service website clients** — agency BUILT the website. These share template patterns, CMS fingerprints, footer credits, CDN domains, CSS class names. Searchable via technical fingerprints.
+- **Tier 2: Marketing-only clients** — agency runs PPC/SEO/leads but the client keeps their OWN website (Squarespace, Wix, WordPress, whatever). NO website fingerprint to find. You must discover these through case studies, award mentions, blog posts, social media tags, review mining, and image/video mining.
+- **Tier 3: Funnel/landing page clients** — agency builds separate ad landing pages (quiz funnels, lead capture pages) but the main practice website is untouched. Search for the funnel pattern on separate domains or subdomains.
+
+**If you only search for Tier 1, you'll miss 50-70% of the client base. All three tiers must be hunted.**
+
+1. **FIRST** — Visit the agency website and find 3-5 CONFIRMED client websites (testimonials, case studies, portfolio, award pages)
 2. **THEN** — Visit each confirmed client's website. Study the patterns:
    - What does the website template look like? (layout, color scheme, navigation structure)
-   - What funnel type? (quiz funnel, appointment form, free consultation CTA)
-   - Check the HTML source for: agency footer credits, Google Analytics IDs, Tag Manager IDs, meta generator tags, unique CSS class names, JavaScript framework signatures, hosting patterns
+   - What CMS/platform? (WordPress, Duda, Squarespace, Webflow, custom?)
+   - What funnel type? (quiz funnel, appointment form, free consultation CTA, specific CTA language)
+   - Check the HTML source for: agency footer credits, Google Analytics IDs, Tag Manager IDs, meta generator tags, unique CSS class names, JavaScript framework signatures, CDN domains, hosting patterns
    - What domain registrar / hosting / CDN patterns do they share?
+   - Do they share a white-labeled CRM portal? (check for client login links)
 3. **THEN** — Search Google for OTHER dental websites matching those patterns. This is where you go from 5 clients to 50-100+.
+   - Search for EACH technical fingerprint you found (CSS classes, CDN domains, footer credits, CMS identifiers)
+   - Search for the funnel CTA language on other dental sites
+   - Search for the agency name + client-type keywords
 4. **THEN** — For every match found, verify it's actually a client (check for template match + funnel type + any agency fingerprint)
 5. **FINALLY** — Scrub each verified client's website for full contact data
 
-**A previous DIM scan found 108 clients using this exact workflow.** The quiz funnel pattern + template signature was the key. Do not skip pattern identification.
+**A previous DIM scan found 147 clients using this workflow.** DIM has three client tiers: Duda-platform websites (searchable via "DM_DIRECT" in source), WordPress+Elementor sites (searchable via "Designed by Dental Implant Machine" footer), and marketing-only clients (found via awards, case studies, reviews). You must look for ALL tiers.
+
+**Known agency platform fingerprints (use these as EXAMPLES of what to look for):**
+| Agency | Platform | Search Signature |
+|---|---|---|
+| Dental Implant Machine | Duda (white-label "DFP") | \`"DM_DIRECT"\` or \`"multiscreensite.com"\` or \`"dmRespRow"\` in page source |
+| Dental Implant Machine | WordPress + Elementor | \`"Designed by Dental Implant Machine"\` in footer |
+| Dental Implant Machine | Quiz funnel | \`"60-second quiz"\` or \`"60-Second Quiz"\` dental implant |
+| Dental Implant Machine | CRM portal | \`"app.theimplantmachine.com"\` (GoHighLevel white-label) |
+| Any agency | Footer credit | \`"designed by [agency]"\` or \`"powered by [agency]"\` or \`"website by [agency]"\` |
+| Any agency | Shared analytics | Search for the GTM-XXXXXXX or G-XXXXXXX ID found on confirmed client sites |
+| Any agency | CMS signature | Check for shared meta generator tags, CSS framework class prefixes, CDN domains |
+
+**For ${agencyName} specifically:** After visiting 3+ confirmed client sites, BUILD YOUR OWN fingerprint table like the one above. Then search for EACH fingerprint across the web.
 
 ### 5. Client Portfolio Discovery — EXHAUSTIVE SEARCH
 
@@ -618,37 +643,47 @@ The #1 reason scans fail is starting and stopping at the agency homepage. The ho
 
 **METHOD 2: Template Detection + Web Footprint Hunting (expect 20-100+ clients — THIS IS THE GOLDMINE)**
 
-**Step A — Identify the agency's digital fingerprint:**
-Visit 3+ confirmed client websites and look for SHARED patterns:
-- Website template: layout structure, navigation style, hero section design, color schemes
-- Funnel type: quiz funnels ("Are you a candidate?"), free consultation forms, specific CTA language
-- Footer credits: "website by ${agencyName}", "powered by ${agencyName}", "designed by ${agencyName}"
-- **HTML source patterns (view source on each client site):**
-  - Google Analytics / GA4 Measurement ID (shared across clients = agency-managed)
-  - Google Tag Manager container ID (GTM-XXXXXXX)
-  - Meta generator tags
-  - Unique CSS class names or framework identifiers
-  - JavaScript libraries or custom scripts loaded from agency domains
-  - Schema markup patterns (same Organization schema across client sites)
-  - CDN or image hosting patterns (shared S3 bucket, agency CDN)
-  - Chatbot or scheduling widget (same vendor widget code across sites)
-  - Hosting provider / nameserver patterns (dig or whois patterns)
+**Step A — Identify the agency's digital fingerprint (visit 3+ confirmed client sites):**
 
-**Step B — Search the web for sites matching that fingerprint:**
-- Search: **"website by ${agencyName}"** or **"powered by ${agencyName}"** or **"designed by ${agencyName}"**
-- Search: **"${agencyWebsite ? new URL(agencyWebsite).hostname : agencyName}" dental** to find sites linking back
-- Search: site:*.com **"${agencyName}"** footer
-- If you found a shared Google Analytics ID: search for that ID to find all sites using it
-- If you found a shared GTM container: search for that container ID
-- If you found a unique CSS class or framework name: search for it
-- If you identified a funnel type (e.g., quiz funnel with specific language): search for that exact CTA text or quiz format on other dental sites
-- Search for dental implant practices with matching website patterns in different cities
-- **Every match = a likely client. Visit each to confirm the pattern + extract contact data.**
+For EACH confirmed client site, view the page source and document:
+
+| What to Look For | Where to Find It | Why It Matters |
+|---|---|---|
+| CMS / Platform | Meta generator tag, page source (wp-content = WordPress, dmAPI = Duda, etc.) | Agencies use one platform across clients |
+| Footer credit | Bottom of page — "designed by", "powered by", "website by" | Direct agency attribution |
+| CSS class prefixes | Page source — look for unusual class naming patterns (e.g., \`dmRespRow\`, \`fl-\`, \`coh-ce-\`) | Shared framework = shared builder |
+| CDN domains | Image/script URLs — shared CDN (e.g., \`multiscreensite.com\`, \`cdn-website.com\`) | Agency-managed hosting |
+| JavaScript objects | Page source — custom JS objects (e.g., \`dmAPI\`, \`$.DM\`) | Proprietary platform signatures |
+| GTM / Analytics IDs | Search source for \`GTM-\`, \`G-\`, \`UA-\`, \`AW-\` | Shared = agency-managed analytics |
+| Funnel / quiz type | CTAs like "60-Second Quiz", "Am I a Candidate?", specific form tools | Agency's conversion playbook |
+| Scheduling widget | CareStack, Modento, Flexbook, LocalMed, etc. | Agencies often standardize on one |
+| Financing partners | CareCredit, Sunbit, Proceed, Cherry — check how many and which ones | Agency packages often include specific partners |
+| Call tracking | CallRail, CallTrackingMetrics — check source for tracking pixels | Agency-managed call tracking |
+| Client portal links | Login links pointing to agency's white-label CRM (GoHighLevel, HubSpot, etc.) | Reveals the agency's tech stack |
+| reCAPTCHA site key | Search source for \`recaptcha\` — shared keys = shared account | Subtle but reliable fingerprint |
+| Service worker | \`/runtime-service-worker.js\` or similar | Platform-specific signature |
+
+**Do this for EACH of the 3+ confirmed sites. Then compare: what's SHARED across 2+ sites? That's the fingerprint.**
+
+**Step B — Search the web for sites matching EACH fingerprint:**
+
+Run ALL of these searches (not just one or two):
+- **Footer credit:** \`"website by ${agencyName}"\` / \`"powered by ${agencyName}"\` / \`"designed by ${agencyName}"\`
+- **Agency link-backs:** \`"${agencyWebsite ? new URL(agencyWebsite).hostname : agencyName}" dental\`
+- **Footer in source:** \`site:*.com "${agencyName}" footer\`
+- **Shared analytics:** If you found a shared GTM or GA ID, search for that exact ID
+- **Platform signatures:** If you found shared CSS classes, CDN domains, or JS objects, search for those exact strings + "dental" or "dentist" or "implant"
+- **Funnel CTA language:** If clients share a quiz or CTA pattern (e.g., "60-second quiz" or "take our quiz"), search: \`"[exact CTA text]" dental implant\`
+- **CRM portal domain:** If you found a client portal URL (e.g., app.theimplantmachine.com), search for that domain
+- **White-label platform ID:** If you found platform identifiers (e.g., "DM_DIRECT" for Duda), search for that string + dental
+- **Similar template in other cities:** Search for dental implant sites in cities where the agency has NO known clients but using matching template patterns
+- **Every match = a likely client. Visit each to confirm the fingerprint + extract contact data.**
 
 **Step C — Snowball expansion:**
-- Each new confirmed client site may reveal ADDITIONAL patterns you missed
+- Each new confirmed client site may reveal ADDITIONAL fingerprints you missed on the first 3
 - Check if confirmed clients link to each other, share reviews, or appear in the same directories
 - Search Google for the practice names you've confirmed + "${agencyName}" to find more connections
+- If you discover the agency uses a white-labeled platform (GoHighLevel, Duda, etc.), search for other dental sites on that same white-label instance
 
 **METHOD 3: Social Media Mining (expect 10-30 clients)**
 - Facebook: scroll through ${agencyName}'s posts — they tag client practices in launch posts, milestone posts, before/after showcases
@@ -695,8 +730,29 @@ Visit 3+ confirmed client websites and look for SHARED patterns:
 - For EACH doctor name extracted: Google search "[Dr. Name] dentist" to find their practice, website, city, state, phone, email
 - **Accuracy rule**: Only record names you can clearly read. If a photo is blurry or a name is partially obscured, note it as uncertain. Quality over quantity.
 
-**METHOD 8: Pattern Matching — Dental Practices Matching Client Profile (expect 10-50 clients)**
-After completing Methods 1-7, you know what a typical ${agencyName} client looks like:
+**METHOD 8: Pattern Matching + Three-Tier Sweep (expect 10-50+ clients)**
+
+By now you should have identified the agency's client tiers. Most agencies have multiple:
+- **Tier 1 (Website clients):** Agency built the site — detectable via template, CMS, footer, CDN
+- **Tier 2 (Marketing-only clients):** Agency runs ads/SEO but client keeps own website — NO web fingerprint, only discoverable via case studies, awards, reviews, social, images
+- **Tier 3 (Funnel/landing page clients):** Agency builds separate quiz or landing pages — search for the funnel pattern on alternate domains
+
+**For each tier, do a final sweep:**
+
+**Tier 1 sweep:** Take your confirmed fingerprint signatures and run 5-10 more Google searches combining them with different dental keywords: "dental implant", "full arch", "All-on-4", "dentures", "cosmetic dentist". Expand to new geographies.
+
+**Tier 2 sweep:** You've already checked case studies (Method 1), images/awards (Method 7), reviews (Method 4), and social (Method 3). Now cross-reference:
+- Take every doctor name from award walls / testimonials / videos and Google them — even if their practice website shows NO agency fingerprint, they may be marketing-only clients
+- Search: "${agencyName}" + each doctor's last name
+- Check the agency's YouTube channel for ALL video titles — each video likely features a different client
+
+**Tier 3 sweep:** Search for the funnel pattern on standalone domains:
+- If the agency uses quiz funnels, search for the exact quiz CTA language + "dental implant" in different cities
+- Check if confirmed clients have separate landing page domains (e.g., city-specific implant microsites)
+- Search Meta Ad Library for ads by confirmed clients — the landing page URL may be a separate funnel domain
+
+**Then pattern-match for net-new prospects:**
+After completing all tiers, you know what a typical ${agencyName} client looks like:
 - What specialties? (implants, full-arch, cosmetic, general)
 - What markets? (city sizes, regions)
 - What funnel type? (quiz, consultation, specific CTA language)
