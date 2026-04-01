@@ -21,6 +21,37 @@ import { salesforceService } from '../services/salesforce.js';
 const WILLIAM_ID = '005PU000001eUQDYA2';
 const SF_BASE = 'https://progressivedental.lightning.force.com';
 
+// ── Notification Exclusion List ──────────────────────────────────────────────
+// These users are excluded from ghost results and will never receive revival
+// notifications. They are admins, leadership, service accounts, or queues —
+// not active Sales Reps who should be following up on dead deals.
+// Matched case-insensitively against Account/Lead/Opp Owner Name.
+const EXCLUDED_OWNERS = new Set([
+  'william summers',
+  'eric chmiel',
+  'aaron jenkins',
+  'alexa cunha',
+  'a rehman',
+  'david shimkus',
+  'devin wilder',
+  'hunter miller',
+  'jase morgan',
+  'jason knellinger',
+  'john parisi',
+  'kate bitters',
+  'kate kennedy',
+  'nate newell',
+  'olivia roach',
+  'simon mata',
+  'tej patel',
+  'richard calahan',
+  // Service accounts / queues / integrations
+  '360 sms',
+  'service account',
+  'tci leads',
+  'inovi',
+]);
+
 // ─── Tool Definition ─────────────────────────────────────────────────────────
 
 export const raiseTheGhostsTools: Tool[] = [
@@ -534,11 +565,16 @@ async function handleRaiseTheGhosts(rawArgs: unknown): Promise<string> {
     ));
   }
 
+  // ── Filter out excluded owners ──────────────────────────────────────────
+  // These are admins, leadership, service accounts, and queues — not Sales Reps.
+  // William Summers is already excluded at SOQL level; this catches the rest.
+  const filteredGhosts = ghosts.filter(g => !EXCLUDED_OWNERS.has(g.ownerName.toLowerCase()));
+
   // Sort by days silent descending (most stale first)
-  ghosts.sort((a, b) => b.daysSilent - a.daysSilent);
+  filteredGhosts.sort((a, b) => b.daysSilent - a.daysSilent);
 
   // Cap to limit
-  const finalGhosts = ghosts.slice(0, limit);
+  const finalGhosts = filteredGhosts.slice(0, limit);
 
   // ── Write Pipeline_Revival__c records to Salesforce ───────────────────
   const scanBatch = new Date().toISOString().split('T')[0]; // e.g. "2026-04-01"
