@@ -141,6 +141,7 @@ export const agencyIntelTools: Tool[] = [
             'Categories should cover: Business Model, Implant Expertise, Client Results, Technology/AI, Training, Events, Video, SEO Depth, PPC Strategy, Social Quality, Reputation, Reporting/Analytics, Client Retention, Scalability',
         },
         researchNotes:           { type: 'string', description: 'Key findings and intelligence notes — max 2000 chars' },
+        scanAnalysis:            { type: 'string', description: 'Full scan analysis text to store in Scan_Analysis__c on the snapshot. If omitted, the tool auto-generates it from the output.' },
         // Proactive actions
         createLeads:             { type: 'boolean', description: 'Auto-create Leads in Salesforce for new prospects not already in SF. Default: true. LeadSource = "Competitor Agency: [agencyName]"' },
         notifyUserIds:           { type: 'string', description: 'Comma-separated Salesforce User IDs to notify via Task when new leads are created or existing records are flagged. Default: William Summers (005PU000001eUQDYA2)' },
@@ -202,6 +203,7 @@ const SaveAgencySnapshotArgs = z.object({
   pdmServiceComparison:     z.string().optional(),
   competitorVsPdmAnalysis:  z.string().optional(),
   researchNotes:            z.string().optional(),
+  scanAnalysis:             z.string().optional(),
   createLeads:              z.boolean().optional(),
   notifyUserIds:            z.string().optional(),
   bypassMinimum:            z.boolean().optional(),
@@ -336,7 +338,7 @@ async function generateClientExcel(
 
   // ── Sheet 2: PDM vs Agency Comparison ────────────────────────────────
   if (serviceComparison && Object.keys(serviceComparison).length > 0) {
-    const compSheet = workbook.addWorksheet('PDM vs ' + agencyName.substring(0, 20));
+    const compSheet = workbook.addWorksheet('Service Comparison');
 
     compSheet.columns = [
       { header: 'Service Area',                  key: 'service',  width: 22 },
@@ -401,7 +403,7 @@ async function generateClientExcel(
 
   // ── Sheet 4: Competitor vs Progressive Dental Marketing Analysis ───
   if (competitorVsPdmAnalysis && competitorVsPdmAnalysis.length > 0) {
-    const vsSheet = workbook.addWorksheet(agencyName.substring(0, 15) + ' vs PDM');
+    const vsSheet = workbook.addWorksheet('Competitive Analysis');
 
     vsSheet.columns = [
       { header: 'Category',                              key: 'category',   width: 28 },
@@ -1594,9 +1596,9 @@ If this agency genuinely has fewer than ${MIN_CLIENTS} discoverable clients, inc
     lines.push('');
     lines.push('**4 tabs:**');
     lines.push('1. **Prospect List** — All clients with contact info, service gaps, poach levers, priority scores, PDM solutions, and SF links');
-    lines.push(`2. **PDM vs ${args.agencyName}** — Service-by-service comparison showing exactly where they fall short`);
+    lines.push(`2. **Service Comparison** — PDM vs ${args.agencyName} service-by-service showing exactly where they fall short`);
     lines.push('3. **Summary** — Aggregate counts by priority and funnel type');
-    lines.push(`4. **${args.agencyName} vs PDM Analysis** — Head-to-head competitive breakdown across every dimension with scorecard`);
+    lines.push(`4. **Competitive Analysis** — Head-to-head ${args.agencyName} vs PDM breakdown across every dimension with scorecard`);
     lines.push('');
     lines.push('Color coding: 🔴 Priority 8-10 (hot) | 🟡 Priority 6-7 (warm) | 🟢 Priority 4-5 (moderate) | ⚪ Low | 🟣 Active PDM Client');
     lines.push('');
@@ -1664,6 +1666,21 @@ If this agency genuinely has fewer than ${MIN_CLIENTS} discoverable clients, inc
   lines.push(`*Agency snapshot: Competitor_Snapshot__c \`${snapshotId}\`*`);
   if (excelPath && !excelPath.startsWith('ERROR')) {
     lines.push(`*Poach list spreadsheet: \`${excelPath}\`*`);
+  }
+
+  // ── Write Scan_Analysis__c back to snapshot ──────────────────────────
+  // Auto-capture the full analysis text. If scanAnalysis was passed explicitly, use that.
+  // Otherwise, use the auto-generated lines[] output. Truncate to 32768 chars (Rich Text Area limit).
+  const analysisText = (args.scanAnalysis || lines.join('\n')).substring(0, 32768);
+  if (snapshotId) {
+    try {
+      await salesforceService.updateRecord('Competitor_Snapshot__c', snapshotId, {
+        Scan_Analysis__c: analysisText,
+      });
+    } catch (err) {
+      lines.push('');
+      lines.push(`> ⚠️ Failed to write Scan_Analysis__c: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   return lines.join('\n');
