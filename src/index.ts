@@ -21,6 +21,7 @@ import { healthScannerTools, healthScannerHandlers } from './tools/healthScanner
 import { amCoachingTools, amCoachingHandlers } from './tools/amCoaching.js';
 import { competitorScanTools, competitorScanHandlers } from './tools/competitorScan.js';
 import { agencyIntelTools, agencyIntelHandlers } from './tools/agencyIntel.js';
+import { raiseTheGhostsTools, raiseTheGhostsHandlers } from './tools/raiseTheGhosts.js';
 
 config();
 
@@ -40,6 +41,7 @@ const ALL_TOOLS = [
   ...amCoachingTools,
   ...competitorScanTools,
   ...agencyIntelTools,
+  ...raiseTheGhostsTools,
 ];
 
 const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
@@ -56,6 +58,7 @@ const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
   ...amCoachingHandlers,
   ...competitorScanHandlers,
   ...agencyIntelHandlers,
+  ...raiseTheGhostsHandlers,
 };
 
 // ─── MCP Server Factory ───────────────────────────────────────────────────
