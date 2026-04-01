@@ -144,6 +144,7 @@ export const agencyIntelTools: Tool[] = [
         // Proactive actions
         createLeads:             { type: 'boolean', description: 'Auto-create Leads in Salesforce for new prospects not already in SF. Default: true. LeadSource = "Competitor Agency: [agencyName]"' },
         notifyUserIds:           { type: 'string', description: 'Comma-separated Salesforce User IDs to notify via Task when new leads are created or existing records are flagged. Default: William Summers (005PU000001eUQDYA2)' },
+        bypassMinimum:           { type: 'boolean', description: 'Set true ONLY if you completed all 8 discovery methods and the agency genuinely has fewer than 20 discoverable clients. You must explain in researchNotes what methods you tried and why yields were low.' },
       },
       required: ['agencyName'],
     },
@@ -203,6 +204,7 @@ const SaveAgencySnapshotArgs = z.object({
   researchNotes:            z.string().optional(),
   createLeads:              z.boolean().optional(),
   notifyUserIds:            z.string().optional(),
+  bypassMinimum:            z.boolean().optional(),
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -840,6 +842,56 @@ async function handleSaveAgencySnapshot(rawArgs: unknown): Promise<string> {
       discoveredClients = JSON.parse(args.discoveredClients);
     } catch {
       return 'Error: discoveredClients must be a valid JSON array. Format: [{"name":"...", "website":"...", "city":"...", "state":"...", "zip":"...", "doctor":"...", "phone":"...", "email":"...", "pocName":"...", "pocRole":"...", "source":"...", "servicesFromAgency":"...", "serviceGaps":"...", "estimatedMaturity":50, "bestPoachLever":"...", "outreachAngle":"...", "notes":"..."}]';
+    }
+  }
+
+  // ── QUALITY GATE: Reject insufficient client discovery ──────────────────────
+  // The scan instructions define 8 discovery methods. 5-6 clients means only
+  // the homepage was checked. Pattern detection (Method 2) and web footprint
+  // hunting (Method 8) typically find 50-100+ additional clients. This gate
+  // prevents Claude from skipping those high-yield methods.
+  const MIN_CLIENTS = 20;
+  if (discoveredClients.length > 0 && discoveredClients.length < MIN_CLIENTS && !args.bypassMinimum) {
+    return `❌ SAVE REJECTED — Only ${discoveredClients.length} clients submitted. Minimum is ${MIN_CLIENTS}.
+
+Your scan is incomplete. You likely only checked the agency homepage and found the obvious names. That is Step 1 of 8 methods.
+
+**GO BACK AND COMPLETE THESE STEPS:**
+
+1. **METHOD 2 — Template Detection (the goldmine):** You should have 3+ confirmed client websites by now. Visit each one and study their patterns:
+   - View HTML source — look for shared Google Analytics IDs, Tag Manager containers, CSS class names, meta tags, JavaScript frameworks
+   - Identify the funnel type (quiz funnel, consultation form, specific CTA language)
+   - Identify the website template (layout, navigation, design patterns)
+   - Then SEARCH GOOGLE for other dental sites matching those patterns
+   - Search for the shared analytics ID, template signature, or funnel language
+   - This method alone found 108 clients for DIM in a previous scan
+
+2. **METHOD 7 — Image/Award/Video Mining:** Go back to the homepage and READ every doctor photo, award wall, testimonial carousel, and video thumbnail. Extract every name. Google each one.
+
+3. **METHOD 8 — Pattern Matching:** Now that you know what a typical ${args.agencyName} client looks like (specialty, market size, funnel type, website template), search for dental practices matching that profile in similar markets.
+
+4. **METHODS 3-6:** Social media posts tagging clients, Google review text mining, search engine discovery, Meta Ad Library.
+
+**Do NOT call sf_save_agency_snapshot again until you have ${MIN_CLIENTS}+ clients with full contact data.**
+If this agency genuinely has fewer than ${MIN_CLIENTS} discoverable clients, include a note explaining what methods you tried and why yields were low, then call again with bypassMinimum: true.`;
+  }
+
+  // ── DATA COMPLETENESS CHECK ──────────────────────────────────────────────────
+  // Warn about rows missing critical contact fields but don't reject
+  if (discoveredClients.length > 0) {
+    const emptyRows = discoveredClients.filter(c =>
+      (!c.phone || c.phone.trim() === '') && (!c.email || c.email.trim() === '')
+    );
+    const noWebsiteRows = discoveredClients.filter(c => !c.website || c.website.trim() === '');
+    const warnings: string[] = [];
+    if (emptyRows.length > discoveredClients.length * 0.3) {
+      warnings.push(`⚠️ ${emptyRows.length}/${discoveredClients.length} clients have NO phone AND no email. Go back and scrub their websites — check contact pages, footers, Google listings. Construct info@domain.com if needed.`);
+    }
+    if (noWebsiteRows.length > 0) {
+      warnings.push(`⚠️ ${noWebsiteRows.length} clients have no website URL. Every client needs a website.`);
+    }
+    if (warnings.length > 0) {
+      return `❌ SAVE REJECTED — Data quality issues:\n\n${warnings.join('\n\n')}\n\nFix the empty fields and call sf_save_agency_snapshot again.`;
     }
   }
 
