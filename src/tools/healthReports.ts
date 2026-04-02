@@ -12,19 +12,99 @@ import type { SalesforceRefundRequest, SalesforceCancellationRequest } from '../
 
 // ─── Governance Constants ──────────────────────────────────────────────────
 
-/** Terminal statuses excluded from all operational bulk queries */
-export const INACTIVE_STATUS_VALUES = ['Cancelled', 'Inactive', 'Expired'] as const;
+// ─── Status__c Picklist — API Name ↔ Label Mapping ─────────────────────────
+// Salesforce picklist API Names are NUMERIC for NetSuite integration.
+// SOQL returns and filters on API Names, NOT labels.
+//
+//   Label           API Name
+//   ─────────────   ────────
+//   Active          Active     (only one where label = API name)
+//   Inactive        117
+//   Cancelled       16
+//   Renewal         15
+//   Non Renewing    24
+//   Reinstated      26
+//   Expired         23
+//   Delinquent      119
+//   Paused          120
+//   Pending         25
+
+/**
+ * Maps Status__c stored value → human-readable label.
+ * Includes BOTH API Name → Label AND Label → Label (pass-through)
+ * because Salesforce stores both forms depending on how the record was created.
+ * Use statusLabel() for ALL user-facing display output.
+ */
+export const STATUS_LABEL_MAP: Record<string, string> = {
+  // API Name → Label
+  'Active': 'Active',
+  '117': 'Inactive',
+  '16': 'Cancelled',
+  '15': 'Renewal',
+  '24': 'Non Renewing',
+  '26': 'Reinstated',
+  '23': 'Expired',
+  '119': 'Delinquent',
+  '120': 'Paused',
+  '25': 'Pending',
+  // Label → Label (pass-through for records stored with label value)
+  'Inactive': 'Inactive',
+  'Cancelled': 'Cancelled',
+  'Renewal': 'Renewal',
+  'Non Renewing': 'Non Renewing',
+  'Reinstated': 'Reinstated',
+  'Expired': 'Expired',
+  'Delinquent': 'Delinquent',
+  'Paused': 'Paused',
+  'Pending': 'Pending',
+  // Legacy prefixed statuses
+  'CUSTOMER-Active': 'Active (Legacy)',
+  'CUSTOMER-Cancelled': 'Cancelled (Legacy)',
+  'CUSTOMER-Inactive': 'Inactive (Legacy)',
+  'CUSTOMER-Hosting Only': 'Hosting Only (Legacy)',
+  'CUSTOMER-Delinquent': 'Delinquent (Legacy)',
+  'Not Billing': 'Not Billing',
+  'Pre Qualified': 'Pre Qualified',
+};
+
+/** Converts Status__c stored value (label OR API name) to display label. */
+export function statusLabel(raw: string | null | undefined): string {
+  if (!raw) return 'No Status';
+  return STATUS_LABEL_MAP[raw] ?? raw;
+}
+
+/**
+ * Terminal statuses — includes BOTH labels and API names because Salesforce
+ * stores both depending on how the record was created (UI = label, API/migration = API name).
+ */
+export const INACTIVE_STATUS_VALUES = ['Cancelled', '16', 'Inactive', '117', 'Expired', '23'] as const;
 const INACTIVE_STATUS_SOQL = INACTIVE_STATUS_VALUES.map((s) => `'${s}'`).join(', ');
 
 /**
+ * Active operational statuses — includes BOTH labels and API names.
+ * Active=Active, Renewal=15, Non Renewing=24, Reinstated=26, Delinquent=119, Paused=120, Pending=25
+ */
+export const ACTIVE_STATUS_VALUES = [
+  'Active',                          // label = API name
+  'Renewal', '15',                   // label + API name
+  'Non Renewing', '24',
+  'Reinstated', '26',
+  'Delinquent', '119',
+  'Paused', '120',
+  'Pending', '25',
+] as const;
+const ACTIVE_STATUS_SOQL = ACTIVE_STATUS_VALUES.map((s) => `'${s}'`).join(', ');
+
+/**
  * Standard WHERE fragment for any query that should return active marketing clients only.
- * Excludes: terminal statuses (Cancelled/Inactive/Expired) AND null status (TCI ticket buyers /
- * converted leads that never became clients). Always combine with OwnerId != WILLIAM_SUMMERS.
+ * Includes BOTH label and API name values because Salesforce stores both depending on
+ * how the record was created (UI creates with label, API/bulk import creates with API name).
+ * Excludes: null, terminal, legacy prefixed (CUSTOMER-Active, etc.)
  *
  * Usage: `WHERE ${ACTIVE_CLIENT_FILTER} AND ${NOISE_ACCOUNT_FILTER} AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'`
  */
 export const ACTIVE_CLIENT_FILTER =
-  `Status__c NOT IN (${INACTIVE_STATUS_SOQL}) AND Status__c != null`;
+  `Status__c IN (${ACTIVE_STATUS_SOQL})`;
 
 /**
  * Filters out known test and noise accounts from bulk operational queries.
@@ -166,7 +246,7 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
     ).then((r) => r[0]),
     salesforceService.getRecentTasks(id, 30),
     salesforceService.getCases(id, { openOnly: true }),
-    salesforceService.getOpportunities(id, { isClosed: false }),
+    salesforceService.getOpportunities(id),
   ]);
 
   if (!accountRaw) throw new Error(`Account not found: ${id}`);
@@ -179,8 +259,9 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
   );
 
   // Detect active products from budget fields (reliable for all accounts).
-  // Only flag Phase 2 services when Status = Active AND budget > 0.
-  const isActive = accountRaw.Status__c === 'Active';
+  // Flag Phase 2 services when account has an active operational status AND budget > 0.
+  const activeStatuses = ['Active', 'Renewal', '15', 'Non Renewing', '24', 'Reinstated', '26', 'Delinquent', '119', 'Paused', '120', 'Pending', '25'];
+  const isActive = activeStatuses.includes(accountRaw.Status__c ?? '');
   const productNames: string[] = [];
   if (isActive && (accountRaw.Budget__c ?? 0) > 0)        productNames.push('PPC');
   if (isActive && (accountRaw.SEO_Budget__c ?? 0) > 0)    productNames.push('SEO');
@@ -203,7 +284,7 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
     `# Health Report: ${accountRaw.Name}`,
     `Generated: ${new Date().toLocaleString()}`,
     '',
-    `**Owner:** ${ownerName} | **Status:** ${accountRaw.Status__c ?? 'Unknown'} | **TCI:** ${accountRaw.TCI_Status__c ?? 'N/A'}`,
+    `**Owner:** ${ownerName} | **Status:** ${statusLabel(accountRaw.Status__c)} | **TCI:** ${accountRaw.TCI_Status__c ?? 'N/A'}`,
     `**MRR:** ${mrr} | **Tier:** ${accountRaw.Tier__c ?? 'N/A'}`,
   ];
 
@@ -507,7 +588,7 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
   const lines: string[] = [
     `# Churn Risk Accounts (score ≤ ${threshold})`,
     `${results.length} accounts flagged | ${accounts.length} active accounts scanned`,
-    `Excludes: William Summers accounts | Statuses: ${INACTIVE_STATUS_VALUES.join(', ')}`,
+    `Excludes: William Summers accounts | Statuses: Cancelled, Inactive, Expired`,
     `Generated: ${new Date().toLocaleString()}`,
     '',
     '> Accounts with open Refund Requests or Cancellation Requests appear first regardless of score.',

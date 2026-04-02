@@ -23,6 +23,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { salesforceService } from '../services/salesforce.js';
+import { statusLabel } from './healthReports.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -317,7 +318,7 @@ async function handleScanCompetitor(rawArgs: unknown): Promise<string> {
   if (locationStr) lines.push(`**Market:** ${locationStr}`);
   if (linkedRecord) {
     const label = accountId ? 'Client' : 'Prospect';
-    lines.push(`**Linked ${label}:** ${linkedRecord.Name}${accountId ? ` (${(linkedRecord as { Status__c?: string }).Status__c ?? 'Status unknown'})` : ''}`);
+    lines.push(`**Linked ${label}:** ${linkedRecord.Name}${accountId ? ` (${statusLabel((linkedRecord as { Status__c?: string }).Status__c)})` : ''}`);
   }
   lines.push(`**Context:** ${context.replace('_', ' ').toUpperCase()}`);
   lines.push(`**Date:** ${today}`);

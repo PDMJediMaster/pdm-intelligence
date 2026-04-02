@@ -43,7 +43,11 @@ interface PendingAction {
 // Maps Telegram chat IDs to Salesforce users. In production this moves to
 // Redis or Postgres. For now, file-based + in-memory with env seed.
 
-const USER_REGISTRY_PATH = new URL('../../data/telegram-users.json', import.meta.url);
+// Use Railway persistent volume (/app/data/) in production, local fallback for dev
+const USER_REGISTRY_DIR = process.env.RAILWAY_ENVIRONMENT
+  ? '/app/data'
+  : new URL('../../data', import.meta.url).pathname;
+const USER_REGISTRY_FILE = `${USER_REGISTRY_DIR}/telegram-users.json`;
 
 let registeredUsers: Map<number, ProphetUser> = new Map();
 let pendingActions: Map<number, PendingAction> = new Map();
@@ -51,7 +55,7 @@ let pendingActions: Map<number, PendingAction> = new Map();
 async function loadUserRegistry(): Promise<void> {
   try {
     const fs = await import('node:fs/promises');
-    const data = await fs.readFile(USER_REGISTRY_PATH, 'utf-8');
+    const data = await fs.readFile(USER_REGISTRY_FILE, 'utf-8');
     const users: ProphetUser[] = JSON.parse(data);
     registeredUsers = new Map(users.map(u => [u.telegramChatId, u]));
     process.stderr.write(`[Prophet Telegram] Loaded ${registeredUsers.size} registered users\n`);
@@ -65,10 +69,9 @@ async function loadUserRegistry(): Promise<void> {
 async function saveUserRegistry(): Promise<void> {
   const fs = await import('node:fs/promises');
   const path = await import('node:path');
-  const dir = path.dirname(USER_REGISTRY_PATH.pathname);
-  await fs.mkdir(dir, { recursive: true });
+  await fs.mkdir(USER_REGISTRY_DIR, { recursive: true });
   const users = Array.from(registeredUsers.values());
-  await fs.writeFile(USER_REGISTRY_PATH, JSON.stringify(users, null, 2));
+  await fs.writeFile(USER_REGISTRY_FILE, JSON.stringify(users, null, 2));
 }
 
 // ─── Tool Router ─────────────────────────────────────────────────────────────
@@ -86,21 +89,21 @@ interface ToolRoute {
 const TOOL_ROUTES: ToolRoute[] = [
   {
     patterns: [
-      /^(?:how is|how's|health|status|check on)\s+(.+?)(?:\s+doing)?$/i,
-      /^health\s+(?:report|score|check)\s+(?:for\s+)?(.+)$/i,
+      /^(?:how is|how's|health|status|check on)\s+(.+?)(?:\s+doing)?\??$/i,
+      /^health\s+(?:report|score|check)\s+(?:for\s+)?(.+?)[\?\.]?$/i,
     ],
     tool: 'sf_get_account_health_report',
-    extractArgs: (match) => ({ accountName: match[1].trim() }),
+    extractArgs: (match) => ({ accountName: match[1].replace(/[?.!]+$/, '').trim() }),
     description: 'Account health report',
   },
   {
     patterns: [
-      /^(?:brief|prep|pre-?call|prepare)\s+(?:me\s+)?(?:for\s+)?(.+)$/i,
-      /^(?:what do (?:we|i) know about)\s+(.+)$/i,
-      /^(?:tell me about)\s+(.+)$/i,
+      /^(?:brief|prep|pre-?call|prepare)\s+(?:me\s+)?(?:for\s+)?(.+?)[\?\.]?$/i,
+      /^(?:what do (?:we|i) know about)\s+(.+?)[\?\.]?$/i,
+      /^(?:tell me about)\s+(.+?)[\?\.]?$/i,
     ],
     tool: 'sf_get_pre_call_brief',
-    extractArgs: (match) => ({ accountName: match[1].trim() }),
+    extractArgs: (match) => ({ accountName: match[1].replace(/[?.!]+$/, '').trim() }),
     description: 'Pre-call brief',
   },
   {
@@ -247,6 +250,30 @@ const TOOL_ROUTES: ToolRoute[] = [
       report_name: match[1]?.trim(),
     }),
     description: 'Create report',
+  },
+  {
+    patterns: [
+      /^(?:schedule|book|set up|create)\s+(?:a\s+)?(?:meeting|call|alignment|event|zoom)\s+(?:with\s+)?(.+)$/i,
+      /^(?:meeting|call|alignment)\s+(?:with\s+)?(.+)$/i,
+    ],
+    tool: 'sf_create_event',
+    extractArgs: (match) => {
+      // This route is intentionally loose — the AI agent handles the complex
+      // parsing of "next Thursday 2pm with Dr. Garcia at Smile Texas on Zoom"
+      return { subject: match[1]?.trim() ?? 'Meeting' };
+    },
+    description: 'Create event',
+  },
+  {
+    patterns: [
+      /^(?:remind me|follow up|task|to-?do)\s+(?:to\s+)?(.+)$/i,
+      /^(?:create|add|new)\s+(?:a\s+)?(?:task|reminder|follow[- ]?up)\s+(.+)$/i,
+    ],
+    tool: 'sf_create_task',
+    extractArgs: (match) => ({
+      subject: match[1]?.trim() ?? 'Follow up',
+    }),
+    description: 'Create task',
   },
 ];
 
@@ -944,6 +971,74 @@ export async function sendMorningBrief(user: ProphetUser): Promise<void> {
     await sendProactiveMessage(user.telegramChatId, brief.message, keyboard);
   } catch (err) {
     process.stderr.write(`[Prophet Telegram] Morning brief failed for ${user.name}: ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+// ─── Post-Event Nudge ───────────────────────────────────────────────────────
+// After every FABC, FAGC, or Power Session, nudge all AMs to log who they met.
+
+export async function sendEventNudge(user: ProphetUser, eventName: string, eventLocation: string): Promise<void> {
+  try {
+    const message =
+      `<b>🎟️ Post-Event Check-In</b>\n\n` +
+      `You were at <b>${eventName}</b> in ${eventLocation} this week.\n\n` +
+      `Which accounts did you meet with? I'll:\n` +
+      `• Log the touchpoint for each account\n` +
+      `• Pull pre-call briefs for follow-up\n` +
+      `• Schedule follow-up tasks on your calendar\n\n` +
+      `<i>Just reply with the account names, one per line. Example:</i>\n` +
+      `<code>Seville Dental\nCoastal Implant Center\nSummit Dental Group</code>\n\n` +
+      `Or tell me: <i>"I met with Seville Dental, talked about expanding Social budget and adding SEO"</i> — I'll log the notes too.`;
+
+    const keyboard = new InlineKeyboard()
+      .text('📋 Show My Accounts', `tool:sf_get_weekly_synopsis:{}`)
+      .row()
+      .text('⏭️ Skip — I\'ll log later', 'action:dismiss');
+
+    await sendProactiveMessage(user.telegramChatId, message, keyboard);
+  } catch (err) {
+    process.stderr.write(`[Prophet Telegram] Event nudge failed for ${user.name}: ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+// ─── Orphaned Video Call Nudge ──────────────────────────────────────────────
+// Nudges call owners about Video Calls not linked to any Account.
+// Prophet can't score what it can't see — unlinked calls = blind spots.
+
+interface OrphanedCall {
+  subject: string;
+  contactName?: string;
+  date: string;
+  callType: string; // 'Meeting' or 'Phone Call'
+}
+
+export async function sendOrphanedCallNudge(
+  user: ProphetUser,
+  orphanedCalls: OrphanedCall[]
+): Promise<void> {
+  if (orphanedCalls.length === 0) return;
+
+  try {
+    const callList = orphanedCalls.slice(0, 10).map((c, i) => {
+      const contact = c.contactName ? ` with <b>${c.contactName}</b>` : '';
+      const icon = c.callType === 'Meeting' ? '🎥' : '📞';
+      return `${i + 1}. ${icon} ${c.subject}${contact} — ${c.date}`;
+    }).join('\n');
+
+    const extra = orphanedCalls.length > 10 ? `\n<i>...and ${orphanedCalls.length - 10} more</i>` : '';
+
+    const message =
+      `<b>⚠️ Unlinked Zoom Calls Found</b>\n\n` +
+      `I found <b>${orphanedCalls.length}</b> Zoom recording${orphanedCalls.length > 1 ? 's' : ''} in the last 14 days with no Account linked:\n\n` +
+      `${callList}${extra}\n\n` +
+      `<b>Why this matters:</b> I can't score these calls in health reports. ` +
+      `Your accounts may look less engaged than they actually are.\n\n` +
+      `<b>Quick fix:</b> Open each Task in Salesforce and set the "Related To" (WhatId) field to the correct Account.\n\n` +
+      `<i>Need help? Reply "brief [account name]" and I'll pull the full picture.</i>`;
+
+    await sendProactiveMessage(user.telegramChatId, message);
+  } catch (err) {
+    process.stderr.write(`[Prophet Telegram] Orphaned call nudge failed for ${user.name}: ${err instanceof Error ? err.message : String(err)}\n`);
   }
 }
 

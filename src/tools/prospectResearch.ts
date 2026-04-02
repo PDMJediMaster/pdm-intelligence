@@ -17,6 +17,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { salesforceService } from '../services/salesforce.js';
+import { statusLabel } from './healthReports.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -473,7 +474,7 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
     lines.push('');
   } else if (sfAccount) {
     lines.push(`## ⚠️ Existing Client Found in Salesforce`);
-    lines.push(`**Account:** ${sfAccount.Name} | Status: ${sfAccount.Status__c ?? 'Unknown'} | Owner: ${(sfAccount.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown'}`);
+    lines.push(`**Account:** ${sfAccount.Name} | Status: ${statusLabel(sfAccount.Status__c)} | Owner: ${(sfAccount.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown'}`);
     lines.push(`- **Account ID:** \`${sfAccount.Id}\` ← pass this to sf_save_research_scores`);
     if (sfAccount.Baseline_Marketing_Maturity__c != null) {
       lines.push(`- **Baseline maturity (at close):** ${sfAccount.Baseline_Marketing_Maturity__c}/100`);

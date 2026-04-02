@@ -6,6 +6,7 @@ import {
   detectProducts,
   generateTalkingPoints,
 } from '../services/healthScoring.js';
+import { statusLabel } from './healthReports.js';
 import { PDM_PRODUCT_LIST, PRODUCT_KEYWORDS } from '../constants.js';
 import type {
   SalesforceAsset,
@@ -25,15 +26,13 @@ import { ACTIVE_ROLE_FILTER } from './healthReports.js';
 /** William Summers user ID — test/admin accounts; excluded from all bulk queries */
 export const WILLIAM_SUMMERS_USER_ID = '005PU000001eUQDYA2';
 
-/** Terminal statuses excluded from all operational queries */
-const INACTIVE_STATUS_VALUES = ['Cancelled', 'Inactive', 'Expired'];
-const INACTIVE_STATUS_SOQL = INACTIVE_STATUS_VALUES.map((s) => `'${s}'`).join(', ');
-
 /**
- * Standard active-client filter. Excludes terminal statuses AND null status (TCI ticket
- * buyers / converted leads that never became clients). Use on every bulk Account query.
+ * Active statuses — includes BOTH labels and API names because Salesforce stores both
+ * depending on how the record was created (UI = label, API/bulk = API name).
  */
-const ACTIVE_CLIENT_FILTER = `Status__c NOT IN (${INACTIVE_STATUS_SOQL}) AND Status__c != null`;
+const ACTIVE_STATUS_VALUES = ['Active', 'Renewal', '15', 'Non Renewing', '24', 'Reinstated', '26', 'Delinquent', '119', 'Paused', '120', 'Pending', '25'];
+const ACTIVE_STATUS_SOQL = ACTIVE_STATUS_VALUES.map((s) => `'${s}'`).join(', ');
+const ACTIVE_CLIENT_FILTER = `Status__c IN (${ACTIVE_STATUS_SOQL})`;
 
 // ─── Tool Definitions ─────────────────────────────────────────────────────
 
@@ -350,7 +349,7 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
       lines.push(`### ${acct.Name}`);
       lines.push(
         `${healthTier(proxyScore)} (${proxyScore}/100) | ${mrr}${tier} | ` +
-        `Owner: ${ownerName} | Status: ${acct.Status__c ?? 'Unknown'}`
+        `Owner: ${ownerName} | Status: ${statusLabel(acct.Status__c)}`
       );
 
       // Alerts
@@ -407,7 +406,7 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
       const owner = (r.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown';
       const urgencyFlag = days <= 7 ? ' 🚨' : days <= 14 ? ' ⚠️' : '';
       lines.push(
-        `- **${r.Name}** | ${r.Status__c ?? 'Unknown'} | ` +
+        `- **${r.Name}** | ${statusLabel(r.Status__c)} | ` +
         `Renews ${r.Contract_Renewal_Date__c} (${days}d)${mrr} | Owner: ${owner}${urgencyFlag}`
       );
     }
@@ -1018,22 +1017,40 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
   // Critical Alerts
   const alerts: string[] = [];
 
-  // TCI Event account — surface at the very top before anything else
+  // TCI Event account — only flag as "event-only" if NOT already an active marketing client.
+  // Many active clients ALSO attend events (FABC, FAGC, Power Sessions). That's positive,
+  // not a warning. Only alert when the account has NO marketing status or is truly event-only.
   if (isTCIEventAccount) {
-    const hasNullStatus  = !accountRaw.Status__c;
+    const hasNullStatus = !accountRaw.Status__c;
+    const isActiveClient = accountRaw.Status__c && !['Cancelled', '16', 'Inactive', '117', 'Expired', '23'].includes(accountRaw.Status__c);
+    const hasMRR = accountRaw.Total_Monthly_Recurring_Amount__c && accountRaw.Total_Monthly_Recurring_Amount__c > 0;
+
     const eventPurchases = tciOpportunities.map(o => {
       const amt = o.Amount ? ` ($${o.Amount.toLocaleString()})` : '';
       const pricebook = o.Pricebook2?.Name ? ` [${o.Pricebook2.Name}]` : '';
       return `${o.Name}${amt}${pricebook} — closed ${o.CloseDate}`;
     });
-    alerts.push(
-      `🎟️ TCI EVENT ACCOUNT — Conference ticket purchaser, not a Phase 2 marketing client. ` +
-      (hasNullStatus ? `Marketing Status not set (Status__c = null). ` : '') +
-      (eventPurchases.length > 0
-        ? `Ticket purchase(s): ${eventPurchases.join(' | ')}. `
-        : `No closed ticket sale found — may be a converted lead. `) +
-      `Goal: convert to active Phase 2 client at or after the event.`
-    );
+
+    if (isActiveClient || hasMRR) {
+      // Active client who ALSO attends events — positive context, not a warning
+      if (eventPurchases.length > 0) {
+        alerts.push(
+          `🎟️ TCI EVENT PARTICIPANT — Active client who also attends TCI events. ` +
+          `Recent event activity: ${eventPurchases.join(' | ')}. ` +
+          `Use event interactions as upsell and relationship-building opportunities.`
+        );
+      }
+    } else {
+      // True event-only account — no active marketing relationship
+      alerts.push(
+        `🎟️ TCI EVENT ACCOUNT — Event ticket purchaser, not yet a Phase 2 marketing client. ` +
+        (hasNullStatus ? `Marketing Status not set (Status__c = null). ` : '') +
+        (eventPurchases.length > 0
+          ? `Ticket purchase(s): ${eventPurchases.join(' | ')}. `
+          : `No closed ticket sale found — may be a converted lead. `) +
+        `Goal: convert to active Phase 2 client at or after the event.`
+      );
+    }
   }
 
   if (refundRequests.length > 0) {
@@ -1088,7 +1105,7 @@ async function handlePreCallBrief(rawArgs: unknown): Promise<string> {
   lines.push('## Account Overview');
   lines.push(`- **Salesforce ID:** ${accountRaw.Id}`);
   lines.push(`- **Owner:** ${ownerName}${amName && amName !== ownerName ? ` | AM: ${amName}` : ''}`);
-  lines.push(`- **Status:** ${accountRaw.Status__c ?? 'Unknown'} | TCI: ${accountRaw.TCI_Status__c ?? 'N/A'}`);
+  lines.push(`- **Status:** ${statusLabel(accountRaw.Status__c)} | TCI: ${accountRaw.TCI_Status__c ?? 'N/A'}`);
   lines.push(`- **MRR:** ${mrr} | Tier: ${accountRaw.Tier__c ?? 'N/A'}`);
   lines.push(`- **Last Contact:** ${lastContactDays !== null ? `${lastContactDays} days ago` : 'Never'}`);
   lines.push(`- **Doctor Last Contacted:** ${doctorContactDays !== null ? `${doctorContactDays} days ago` : 'Not recorded'}`);

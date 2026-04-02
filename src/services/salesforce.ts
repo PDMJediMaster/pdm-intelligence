@@ -122,7 +122,7 @@ class SalesforceService {
       SELECT Id, Name, Phone, OwnerId, Owner.Name, Status__c, TCI_Status__c, LastActivityDate
       FROM Account
       WHERE Name LIKE '%${safe}%'
-        AND Status__c = 'Active'
+        AND Status__c IN ('Active','Renewal','15','Non Renewing','24','Reinstated','26','Delinquent','119','Paused','120','Pending','25')
       ORDER BY Name
       LIMIT 10
     `);
@@ -135,7 +135,7 @@ class SalesforceService {
              Total_Monthly_Recurring_Amount__c,
              LastActivityDate, Management_Fee__c, Contract_End_Date__c
       FROM Account
-      WHERE Status__c = 'Active'
+      WHERE Status__c IN ('Active','Renewal','15','Non Renewing','24','Reinstated','26','Delinquent','119','Paused','120','Pending','25')
         AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
         AND ${ACTIVE_ROLE_SOQL}
       ORDER BY Name
@@ -149,7 +149,7 @@ class SalesforceService {
       SELECT Id, Name, OwnerId, Owner.Name, Status__c, TCI_Status__c,
              LastActivityDate, Contract_End_Date__c
       FROM Account
-      WHERE Status__c = 'Active'
+      WHERE Status__c IN ('Active','Renewal','15','Non Renewing','24','Reinstated','26','Delinquent','119','Paused','120','Pending','25')
         AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
         AND ${ACTIVE_ROLE_SOQL}
         AND (LastActivityDate = null OR LastActivityDate < ${cutoff})
@@ -214,7 +214,7 @@ class SalesforceService {
       FROM Account
       WHERE Contract_Renewal_Date__c >= ${today}
         AND Contract_Renewal_Date__c <= ${future}
-        AND Status__c NOT IN ('Cancelled','Inactive','Expired')
+        AND Status__c NOT IN ('Cancelled','16','Inactive','117','Expired','23')
         AND Status__c != null
         AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
         AND ${ACTIVE_ROLE_SOQL}
@@ -263,7 +263,7 @@ class SalesforceService {
       SELECT Id, Status__c, Budget__c, SEO_Budget__c, Social_Budget__c,
              TCI_Status__c, TCI_Enrolled__c
       FROM Account
-      WHERE Status__c NOT IN ('Cancelled','Inactive','Expired')
+      WHERE Status__c NOT IN ('16','117','23')
         AND Status__c != null
         AND ${ACTIVE_ROLE_SOQL}
         AND OwnerId != '005PU000001eUQDYA2'
@@ -272,8 +272,11 @@ class SalesforceService {
 
     const results: { accountId: string; productName: string }[] = [];
     for (const a of accounts) {
-      const isActive = a.Status__c === 'Active';
-      // Phase 2 services: only count when account is Active AND budget is set
+      // Only Status__c = 'Active' confirms services are currently running.
+      // Renewal/Non Renewing/Reinstated/Delinquent also have active services.
+      const activeStatuses = ['Active', 'Renewal', '15', 'Non Renewing', '24', 'Reinstated', '26', 'Delinquent', '119'];
+      const isActive = activeStatuses.includes(a.Status__c ?? '');
+      // Phase 2 services: only count when account has active status AND budget is set
       if (isActive && (a.Budget__c ?? 0) > 0)        results.push({ accountId: a.Id, productName: 'PPC' });
       if (isActive && (a.SEO_Budget__c ?? 0) > 0)    results.push({ accountId: a.Id, productName: 'SEO' });
       if (isActive && (a.Social_Budget__c ?? 0) > 0) results.push({ accountId: a.Id, productName: 'Social Media' });

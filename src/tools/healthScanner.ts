@@ -22,7 +22,7 @@ import { z } from 'zod';
 import { salesforceService } from '../services/salesforce.js';
 import { proxyHealthScore } from '../services/healthScoring.js';
 import { WILLIAM_SUMMERS_USER_ID } from './accountManagement.js';
-import { INACTIVE_STATUS_VALUES, ACTIVE_CLIENT_FILTER, ACTIVE_ROLE_FILTER } from './healthReports.js';
+import { INACTIVE_STATUS_VALUES, ACTIVE_CLIENT_FILTER, ACTIVE_ROLE_FILTER, statusLabel } from './healthReports.js';
 
 // ─── Salesforce Types ─────────────────────────────────────────────────────────
 
@@ -701,7 +701,7 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
         ? ` | $${acct.Total_Monthly_Recurring_Amount__c.toLocaleString()}/mo`
         : '';
       const created = acct.CreatedDate.split('T')[0];
-      lines.push(`- **${acct.Name}** | Created: ${created} | Status: ${acct.Status__c ?? 'Unknown'} | AM: ${amName}${mrr}`);
+      lines.push(`- **${acct.Name}** | Created: ${created} | Status: ${statusLabel(acct.Status__c)} | AM: ${amName}${mrr}`);
     }
     lines.push('');
   } else {
@@ -811,7 +811,7 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
     onboardingGapAccounts: onboardingGapAccounts.map(a => ({
       name:    a.Name,
       created: a.CreatedDate.split('T')[0],
-      status:  a.Status__c ?? 'Unknown',
+      status:  statusLabel(a.Status__c),
       amName:  (a.Account_Manager_Lookup__r as { Name?: string } | undefined)?.Name
             ?? (a.Owner as { Name?: string } | undefined)?.Name
             ?? 'Unknown',

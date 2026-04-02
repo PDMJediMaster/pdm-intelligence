@@ -14,6 +14,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { salesforceService } from '../services/salesforce.js';
+import { statusLabel } from './healthReports.js';
 
 // ─── Salesforce Types ─────────────────────────────────────────────────────────
 
@@ -377,7 +378,7 @@ async function handleRenewalProof(rawArgs: unknown): Promise<string> {
   lines.push(`# 🔄 Renewal Proof Package: ${sfAccount.Name}`);
   if (location) lines.push(`**${location}**${sfAccount.Website ? ` | ${sfAccount.Website}` : ''}`);
   lines.push(`AM: **${amName}** | MRR: **${mrrFormat(totalMRR)}**${annualValue ? ` (${mrrFormat(annualValue / 12)} × 12 = $${annualValue.toLocaleString()}/yr)` : ''}`);
-  lines.push(`Status: **${sfAccount.Status__c ?? 'Unknown'}** | Tier: ${sfAccount.Tier__c ?? 'Unknown'}`);
+  lines.push(`Status: **${statusLabel(sfAccount.Status__c)}** | Tier: ${sfAccount.Tier__c ?? 'Unknown'}`);
   lines.push('');
 
   // ── Renewal Countdown ─────────────────────────────────────────────────────

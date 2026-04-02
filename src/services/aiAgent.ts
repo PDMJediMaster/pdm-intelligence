@@ -236,6 +236,47 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
       required: ['report_name', 'report_type'],
     },
   },
+  {
+    name: 'sf_create_event',
+    description: 'Create a Salesforce Event (meeting, call, alignment call, Zoom meeting). Links to Account and Contact. Use when someone wants to schedule any kind of meeting or call.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        accountName: { type: 'string', description: 'Account name (fuzzy search)' },
+        accountId: { type: 'string', description: 'Salesforce Account ID' },
+        contactName: { type: 'string', description: 'Contact name to link (e.g., "Dr. Garcia")' },
+        subject: { type: 'string', description: 'Event subject/title' },
+        description: { type: 'string', description: 'Event notes' },
+        startDateTime: { type: 'string', description: 'Start date/time ISO 8601 (e.g., "2026-04-10T14:00:00")' },
+        endDateTime: { type: 'string', description: 'End date/time ISO 8601' },
+        location: { type: 'string', description: 'Physical location or address' },
+        zoomLink: { type: 'string', description: 'Zoom meeting URL' },
+        isZoomMeeting: { type: 'boolean', description: 'If true, marks as Zoom Video Call' },
+        isAllDayEvent: { type: 'boolean', description: 'True for all-day events' },
+        ownerId: { type: 'string', description: 'Event owner Salesforce User ID' },
+      },
+      required: ['subject', 'startDateTime'],
+    },
+  },
+  {
+    name: 'sf_create_task',
+    description: 'Create a future Salesforce Task (follow-up, reminder, to-do). Unlike sf_log_account_note which logs completed activities, this creates open tasks due in the future.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        accountName: { type: 'string', description: 'Account name (fuzzy search)' },
+        accountId: { type: 'string', description: 'Salesforce Account ID' },
+        contactName: { type: 'string', description: 'Contact name to link' },
+        subject: { type: 'string', description: 'Task subject' },
+        description: { type: 'string', description: 'Task notes' },
+        dueDate: { type: 'string', description: 'Due date YYYY-MM-DD' },
+        priority: { type: 'string', enum: ['High', 'Normal', 'Low'], description: 'Task priority' },
+        type: { type: 'string', enum: ['Call', 'Email', 'Meeting', 'Other'], description: 'Task type' },
+        ownerId: { type: 'string', description: 'Task owner Salesforce User ID' },
+      },
+      required: ['subject'],
+    },
+  },
 ];
 
 // ─── System Prompt ───────────────────────────────────────────────────────────

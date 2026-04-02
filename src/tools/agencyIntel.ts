@@ -26,6 +26,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { salesforceService } from '../services/salesforce.js';
+import { statusLabel } from './healthReports.js';
 import ExcelJS from 'exceljs';
 import path from 'node:path';
 import os from 'node:os';
@@ -518,7 +519,7 @@ async function handleScanAgency(rawArgs: unknown): Promise<string> {
         const lines: string[] = ['## 🔍 Known Clients Already in Salesforce', ''];
         for (const a of accts) {
           const mrr = a.Total_Monthly_Recurring_Amount__c ? `$${Math.round(a.Total_Monthly_Recurring_Amount__c).toLocaleString()}/mo` : '';
-          lines.push(`- **${a.Name}** — Account (${a.Status__c || 'Unknown status'}) | Owner: ${a.Owner?.Name || 'Unknown'} ${mrr}`);
+          lines.push(`- **${a.Name}** — Account (${statusLabel(a.Status__c)}) | Owner: ${a.Owner?.Name || 'Unknown'} ${mrr}`);
         }
         for (const l of leads) {
           lines.push(`- **${l.Name}** (${l.Company || ''}) — Lead | Owner: ${l.Owner?.Name || 'Unknown'}`);
@@ -1148,7 +1149,7 @@ If this agency genuinely has fewer than ${dynamicMin} discoverable clients, incl
           const mrr = a.Total_Monthly_Recurring_Amount__c ? `$${Math.round(a.Total_Monthly_Recurring_Amount__c).toLocaleString()}/mo` : '';
           existingClients.push({ client, record: a, type: 'Account' });
           clientMatches.push(
-            `✅ **${client.name}** → SF Account: ${a.Name} (${a.Status__c || '?'}) | ` +
+            `✅ **${client.name}** → SF Account: ${a.Name} (${statusLabel(a.Status__c)}) | ` +
             `Owner: ${a.Owner?.Name || '?'} ${mrr}` +
             (a.Health_Score__c ? ` | Health: ${a.Health_Score__c}/100` : '')
           );
@@ -1253,8 +1254,8 @@ If this agency genuinely has fewer than ${dynamicMin} discoverable clients, incl
       try {
         if (type === 'Account') {
           const status = record.Status__c || '';
-          const active = ['Active', 'Renewal', 'Reinstated', 'Pending'].includes(status);
-          const cancelled = ['Cancelled', 'Inactive', 'Expired'].includes(status);
+          const active = ['Active', 'Renewal', '15', 'Reinstated', '26', 'Pending', '25'].includes(status);
+          const cancelled = ['Cancelled', '16', 'Inactive', '117', 'Expired', '23'].includes(status);
 
           if (active) {
             // 🚨 CHURN RISK: Active PDM client found with competitor agency
@@ -1362,7 +1363,7 @@ If this agency genuinely has fewer than ${dynamicMin} discoverable clients, incl
     if (match) {
       sfLink = `${SF_BASE_URL}/${match.record.Id}`;
       if (match.type === 'Account') {
-        const active = ['Active', 'Renewal', 'Reinstated', 'Pending'].includes(match.record.Status__c || '');
+        const active = ['Active', 'Renewal', '15', 'Reinstated', '26', 'Pending', '25'].includes(match.record.Status__c || '');
         funnelType = active ? 'Active PDM Client' : 'Existing Account';
         priorityScore = active ? 1 : 5; // active = monitor, inactive = re-engage
       } else {
@@ -1535,14 +1536,14 @@ If this agency genuinely has fewer than ${dynamicMin} discoverable clients, incl
 
     // Active PDM clients using this competitor = churn risk
     const activeWithCompetitor = existingClients.filter(
-      e => e.type === 'Account' && e.record.Status__c && !['Cancelled', 'Inactive', 'Expired'].includes(e.record.Status__c)
+      e => e.type === 'Account' && e.record.Status__c && !['Cancelled', '16', 'Inactive', '117', 'Expired', '23'].includes(e.record.Status__c)
     );
     if (activeWithCompetitor.length > 0) {
       lines.push('### ⚠️ Active PDM Clients Also Linked to This Agency');
       lines.push('*These practices may be evaluating a switch or using both. Monitor closely.*');
       lines.push('');
       for (const { client, record } of activeWithCompetitor) {
-        lines.push(`- **${record.Name}** — ${record.Status__c} | Health: ${record.Health_Score__c || '?'}/100 | Source: ${client.source || 'portfolio page'}`);
+        lines.push(`- **${record.Name}** — ${statusLabel(record.Status__c)} | Health: ${record.Health_Score__c || '?'}/100 | Source: ${client.source || 'portfolio page'}`);
       }
       lines.push('');
     }

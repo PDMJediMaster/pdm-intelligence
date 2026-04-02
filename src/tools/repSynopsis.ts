@@ -15,6 +15,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { salesforceService } from '../services/salesforce.js';
+import { statusLabel } from './healthReports.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -269,7 +270,7 @@ async function handleRepPipelineSynopsis(rawArgs: unknown): Promise<string> {
        FROM Account
        WHERE OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
          ${oppOwnerFilter}
-         AND Status__c NOT IN ('Active', 'Reinstated')
+         AND Status__c NOT IN ('Active', 'Reinstated', '26')
          AND (TCI_Status__c = null OR TCI_Status__c != 'Member')
          AND Id IN (
            SELECT Account__c FROM TCI_Events_Attended__c
@@ -360,7 +361,7 @@ async function handleRepPipelineSynopsis(rawArgs: unknown): Promise<string> {
         ? Math.floor((Date.now() - new Date(acct.LastActivityDate).getTime()) / 86_400_000)
         : null;
       const contactNote = daysSinceLast === null ? '⚠️ Never contacted' : `${daysSinceLast}d since last contact`;
-      const statusNote  = acct.Status__c ?? 'No marketing status';
+      const statusNote = acct.Status__c ? statusLabel(acct.Status__c) : 'No marketing status';
 
       lines.push(`- **${acct.Name}**${location ? ` | ${location}` : ''} | ${contactNote} | ${statusNote} | Owner: ${owner}`);
       if (acct.Phone) lines.push(`  📞 ${acct.Phone}`);
@@ -640,7 +641,7 @@ async function handleEventConversionPipeline(rawArgs: unknown): Promise<string> 
      FROM TCI_Events_Attended__c
      WHERE Account__c != null
        AND Is_This_A_Sponsor__c = false
-       AND Account__r.Status__c NOT IN ('Active', 'Reinstated')
+       AND Account__r.Status__c NOT IN ('Active', 'Reinstated', '26')
        AND Account__r.TCI_Status__c != 'Member'
        ${ownerClause}
      ORDER BY Account__r.LastActivityDate ASC NULLS FIRST
@@ -826,7 +827,7 @@ async function handleEventConversionPipeline(rawArgs: unknown): Promise<string> 
         const location    = [g.city, g.state].filter(Boolean).join(', ');
         const owner       = g.ownerName ?? 'Unknown';
         const lastContact = g.daysSinceContact === 9999 ? 'Never contacted' : `Last contact: ${g.daysSinceContact}d ago`;
-        const statusNote  = g.status ? ` | Status: ${g.status}` : ' | No marketing status';
+        const statusNote  = g.status ? ` | Status: ${statusLabel(g.status)}` : ' | No marketing status';
         const tciNote     = g.tciStatus ? ` | TCI: ${g.tciStatus}` : '';
         const multiEvt    = g.events.length > 1 ? ` | 🔁 ${g.events.length} events` : '';
         const checkedIn   = g.events.some(e => e.checkedIn);
@@ -865,7 +866,7 @@ async function handleEventConversionPipeline(rawArgs: unknown): Promise<string> 
       const lastContact = g.daysSinceContact === 9999 ? '⚠️ Never contacted' : `${g.daysSinceContact}d since last contact`;
       const dormantFlag = g.daysSinceContact > 90 ? ' 🧊 COLD' : g.daysSinceContact > 30 ? ' ⚠️ Going cold' : '';
       const multiEvt    = g.events.length > 1 ? ` | 🔁 **${g.events.length} events attended** — high intent` : '';
-      const statusNote  = g.status ? `Status: ${g.status}` : 'No marketing status';
+      const statusNote  = g.status && !/^\d+$/.test(g.status) ? `Status: ${g.status}` : 'No marketing status';
       const confirmedAttendee = g.events.some(e => e.checkedIn);
       const eventsList  = g.events
         .map(e => `${e.eventName}${e.checkedIn ? ' ✅' : ' (registered)'}`)

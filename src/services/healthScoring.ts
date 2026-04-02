@@ -20,7 +20,8 @@ import type { PDMProduct } from '../constants.js';
 function scoreEngagement(
   tasks: SalesforceTask[],
   daysBack = ENGAGEMENT_SCORING.LOOKBACK_DAYS,
-  recentVideoCallCount = 0
+  recentVideoCallCount = 0,
+  recentClosedWonOpps = 0
 ): { score: number; details: string } {
   const cutoff = Date.now() - daysBack * 86_400_000;
   const now    = Date.now();
@@ -55,12 +56,18 @@ function scoreEngagement(
   const emailPts   = Math.min(emails.length * ENGAGEMENT_SCORING.EMAIL_POINTS,   ENGAGEMENT_SCORING.EMAIL_MAX);
   const meetingPts = Math.min(totalMeetings * ENGAGEMENT_SCORING.MEETING_POINTS, ENGAGEMENT_SCORING.MEETING_MAX);
 
-  const score = Math.min(callPts + emailPts + meetingPts, 100);
+  // Closed-won Opportunities in the last 30 days = high-value engagement.
+  // A face-to-face deal close (e.g., at an event) is the strongest engagement signal.
+  // 25 pts per closed-won opp, max 50 pts.
+  const closedWonPts = Math.min(recentClosedWonOpps * 25, 50);
+
+  const score = Math.min(callPts + emailPts + meetingPts + closedWonPts, 100);
   const vcNote = recentVideoCallCount > 0 ? `, ${recentVideoCallCount} video call(s)` : '';
+  const cwNote = recentClosedWonOpps > 0 ? `, ${recentClosedWonOpps} closed-won opp(s)` : '';
   const details = [
     `${calls.length} call(s)`,
     `${emails.length} email(s)`,
-    `${meetings.length} meeting(s)${vcNote}`,
+    `${meetings.length} meeting(s)${vcNote}${cwNote}`,
     `in last ${daysBack} days`,
   ].join(', ');
 
@@ -117,6 +124,27 @@ function scoreRenewal(
   opportunities: SalesforceOpportunity[],
   contractEndDate?: string
 ): { score: number; details: string } {
+  // Check for recent closed-won Opps (last 60 days) — these override an expired contract date.
+  // A client who just re-signed is NOT at renewal risk, even if Contract_Renewal_Date__c
+  // hasn't been updated yet. This is common after event re-signs and mid-cycle upgrades.
+  const recentCutoff = Date.now() - 60 * 86_400_000;
+  const recentClosedWon = opportunities.filter(
+    (o) => o.StageName === 'Closed Won' && new Date(o.CloseDate).getTime() >= recentCutoff
+  );
+
+  if (recentClosedWon.length > 0) {
+    const latestClose = recentClosedWon.reduce((a, b) =>
+      new Date(a.CloseDate) > new Date(b.CloseDate) ? a : b
+    );
+    const daysSinceClose = Math.floor(
+      (Date.now() - new Date(latestClose.CloseDate).getTime()) / 86_400_000
+    );
+    return {
+      score: 95,
+      details: `Recently re-signed — ${recentClosedWon.length} closed-won opp(s), latest ${daysSinceClose}d ago`,
+    };
+  }
+
   // Prefer explicit contract end date on the Account
   if (contractEndDate) {
     const daysUntil = Math.floor(
@@ -172,7 +200,13 @@ export function calculateHealthScore(
   contractEndDate?: string,
   recentVideoCallCount = 0
 ): HealthScore {
-  const { score: engagementRaw, details: engagementDetails } = scoreEngagement(tasks, undefined, recentVideoCallCount);
+  // Count closed-won Opps in last 30 days — these are engagement signals
+  const engagementCutoff = Date.now() - 30 * 86_400_000;
+  const recentClosedWonCount = opportunities.filter(
+    (o) => o.StageName === 'Closed Won' && new Date(o.CloseDate).getTime() >= engagementCutoff
+  ).length;
+
+  const { score: engagementRaw, details: engagementDetails } = scoreEngagement(tasks, undefined, recentVideoCallCount, recentClosedWonCount);
   const { score: casesRaw,      details: casesDetails      } = scoreCases(openCases);
   const { score: renewalRaw,    details: renewalDetails    } = scoreRenewal(opportunities, contractEndDate);
 
