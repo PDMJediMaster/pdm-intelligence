@@ -509,7 +509,9 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
   lines.push('');
   lines.push(`---`);
   lines.push('');
-  lines.push(`**PRODUCE THE COMPLETE RESEARCH REPORT IN THIS EXACT ORDER:**`);
+  lines.push(`**PRODUCE THE COMPLETE RESEARCH REPORT IN THIS EXACT ORDER.**`);
+  lines.push(`**⚠️ MANDATORY SECTIONS — DO NOT SKIP OR ABBREVIATE:**`);
+  lines.push(`Sections 3 (Patient Psychology), 4 (Clinical Authority), 11 (Trust Signals), 12 (Local Differentiation), 14 (Safety Hierarchy), 15 (Patient Decision Journey), and 17 (3-Engine Growth System) are NOT optional. These sections differentiate PDM from every other marketing agency. If web research yields limited data for a section, use market-level inference and label assumptions — but produce the section.`);
   lines.push('');
   lines.push(`### 1. Practice Overview`);
   lines.push(`Practice name, website, location, doctor name(s), specialty focus, years in practice, facility impressions. Note any unique differentiators: boutique vs. chain feel, bilingual staff, technology mentioned, financing offered.`);
@@ -609,19 +611,86 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
   lines.push(`### 13. Opportunity Gaps`);
   lines.push(`What specific gaps exist that PDM can close? List 5–8 concrete gaps with the business impact of closing each. Example format: "GAP: No before/after gallery. IMPACT: Patients researching implants need visual proof before calling. Competitors with galleries convert 2–3x more implant consultations from organic traffic."`);
   lines.push('');
-  lines.push(`### 14. Market Domination Strategy`);
+  lines.push(`### 14. The Safety Hierarchy — Why Patients Choose One Doctor Over Another`);
+  lines.push(`**This section is the single most important insight in the entire report.** Frame it clearly:`);
+  lines.push(`*"Full-arch patients don't choose the cheapest doctor. They don't choose the closest. They choose the doctor who feels safest."*`);
+  lines.push('');
+  lines.push(`Map this practice against the 4-level Safety Hierarchy:`);
+  lines.push(`1. **The doctor who feels safest** → Visible experience, guided surgery explanation, calm authority presence on camera. Where does this practice stand? Where does the #1 competitor stand?`);
+  lines.push(`2. **The office that looks most experienced** → Before/after volume, case count claims, technology showcase, team depth. Who wins this comparison in this market?`);
+  lines.push(`3. **The brand that explains things clearly** → Process videos, FAQ pages, candidacy content, recovery timeline. Is the patient's journey mapped out on the website, or is it a mystery?`);
+  lines.push(`4. **The team that reduces anxiety fastest** → Same-day consult offers, sedation communication, bilingual comfort, first-visit experience. What is the "fear reduction speed" of this practice vs. competitors?`);
+  lines.push('');
+  lines.push(`**Closer line for the rep (include verbatim):** "You're not losing to a better dentist. You're losing to a dentist who reduces fear faster."`);
+  lines.push('');
+  lines.push(`### 15. Patient Decision Journey — Where Cases Are Lost`);
+  lines.push(`Map the 5-step journey a full-arch patient takes from first search to case acceptance. For EACH step, identify whether this practice converts or leaks:`);
+  lines.push(`1. **SEARCH** — "Who can fix this?" → Does this practice appear? SEO, Ads, Maps presence.`);
+  lines.push(`2. **COMPARE** — "Who looks safest?" → Authority content, case count, doctor video. Who wins when a patient opens 3 tabs?`);
+  lines.push(`3. **VALIDATE** — "Do others trust them?" → Reviews, testimonials, social proof. Is there enough proof to move past this stage?`);
+  lines.push(`4. **UNDERSTAND** — "What will happen to me?" → Process content, FAQ, candidacy page, recovery timeline. Does the site answer the 5 fears or leave them hanging?`);
+  lines.push(`5. **COMMIT** — "I feel confident enough to call" → Clear CTA, consult offer, financing visibility, scheduling ease.`);
+  lines.push('');
+  lines.push(`For each step, rate: ✅ Converting | ⚠️ Weak | ❌ Leaking`);
+  lines.push('');
+  lines.push(`**Closer line (include verbatim):** "Most practices only optimize Step 1. Steps 2–5 are where your competitors are winning cases you generated. We don't just help you get found — we help you get chosen."`);
+  lines.push('');
+  lines.push(`### 16. "What If You Do Nothing" — 12-Month Competitive Erosion Projection`);
+  lines.push(`Quantify what happens if this practice takes no marketing action for the next 12 months. Use observed competitor data to project:`);
+  lines.push(`- **Review gap widening:** If the top competitor gains ~X reviews/month, in 12 months they'll have Y more reviews while this practice stands still.`);
+  lines.push(`- **Ad spend compounding:** If the competitor spends on Google Ads for 12 more months, they'll have captured an estimated Z additional high-intent implant searches.`);
+  lines.push(`- **Estimated cases lost:** At current invisibility levels, estimate cases/month being lost to competitors. Over 12 months, that's $X in revenue walking to other practices.`);
+  lines.push(`- **Maps ranking trajectory:** Without reviews and SEO investment, this practice will not enter the Maps Pack. The top 3 positions will continue to consolidate.`);
+  lines.push(`- **Authority gap:** Competitors producing video and patient stories will compound their trust advantage. The gap in perceived safety and expertise will be harder and more expensive to close in 12 months than it is today.`);
+  lines.push('');
+  lines.push(`**Closer line (include verbatim):** "The cost of waiting isn't zero — it's the cases you'll never know you lost. Every month without action, the gap gets wider and more expensive to close."`);
+  lines.push('');
+  lines.push(`### 17. The 3-Engine Growth System — What PDM Builds`);
+  lines.push(`Frame PDM's value as three integrated engines, not a list of services. This is how the rep presents the solution:`);
+  lines.push('');
+  lines.push(`**Engine 1: VISIBILITY** — Getting Found`);
+  lines.push(`SEO, Google Ads, Maps optimization, review generation. This is what most marketing companies sell. It's necessary but not sufficient.`);
+  lines.push('');
+  lines.push(`**Engine 2: AUTHORITY** — Getting Trusted`);
+  lines.push(`Doctor positioning, authority video, before/after proof architecture, clinical content that explains guided surgery and full-arch workflow in terms patients trust. This is what separates "leads" from "booked consultations."`);
+  lines.push('');
+  lines.push(`**Engine 3: CONVERSION** — Getting Chosen`);
+  lines.push(`Patient psychology integration, trust sequencing, candidacy/FAQ content, fear-reduction architecture, financial confidence building. This is what separates "consultations" from "$30K case acceptances."`);
+  lines.push('');
+  lines.push(`For this specific practice, identify which engine needs the most work and why. Then show the 90-day build sequence:`);
+  lines.push(`- **Month 1: Foundation & Visibility** — SEO pages, Google Ads launch, review generation, Maps optimization`);
+  lines.push(`- **Month 2: Safety, Proof & Case Acceptance Assets** — Doctor authority video, before/after gallery, candidacy page, process explainer, patient testimonial sequencing`);
+  lines.push(`- **Month 3: Authority Compounding & Lead Acceleration** — YouTube authority channel, content library, retargeting, social proof amplification, community positioning`);
+  lines.push('');
+  lines.push(`**Closer line (include verbatim):** "Most marketing companies help you get found. We help you get found, trusted, AND chosen. That's three engines, not one — and it's why our clients close more of the leads they generate."`);
+  lines.push('');
+  lines.push(`### 18. Market Domination Strategy`);
   lines.push(`The path to owning the local implant market — not just improving visibility. Answer:`);
   lines.push(`- What narrative should this practice own? (The one that's currently unclaimed by competitors)`);
   lines.push(`- What is the single fastest path to 2–3 additional full-arch cases per month?`);
   lines.push(`- What is the biggest competitor weakness to exploit?`);
-  lines.push(`- What is the 90-day build sequence? (Month 1: Foundation & Visibility → Month 2: Safety, Proof & Case Acceptance Assets → Month 3: Authority Compounding & Lead Acceleration)`);
   lines.push(`- What does this practice look like at 12 months if they execute?`);
   lines.push('');
-  lines.push(`### 15. Strategic Recommendations`);
+  lines.push(`### 19. Competitive Gap Summary — PDM Product Mapping`);
+  lines.push(`For every PDM product across all four phases, audit whether the dominant competitor has it and whether this practice has it. This table directly maps gaps to revenue. Structure as:`);
+  lines.push('');
+  lines.push(`**PHASE 1 (One-Time):** Website, Video, Graphic Design, Traditional Media`);
+  lines.push(`**PHASE 2 (Recurring):** PPC, SEO, Social Media`);
+  lines.push(`**TCI:** Events, Mentorship`);
+  lines.push('');
+  lines.push(`For each product: Competitor status → Practice status → Gap? → PDM Product → Urgency`);
+  lines.push('');
+  lines.push(`End with:`);
+  lines.push(`- Total gaps identified (Phase 1: X | Phase 2: X | TCI: X)`);
+  lines.push(`- Estimated one-time opportunity (Phase 1 services)`);
+  lines.push(`- Estimated monthly recurring opportunity (Phase 2 + TCI)`);
+  lines.push(`- Highest urgency gap and recommended first conversation`);
+  lines.push('');
+  lines.push(`### 20. Strategic Recommendations`);
   lines.push(`5–7 specific recommendations. Each must include: WHAT to do, WHY it works (tied to observed gap or market data), and the IMPACT (revenue, cases, authority).`);
   lines.push(`Balance tactical execution (SEO, ads, reviews) with trust architecture (authority video, proof sequencing, clinical authority content). Both are required.`);
   lines.push('');
-  lines.push(`### 16. Sales Enablement Summary`);
+  lines.push(`### 21. Sales Enablement Summary`);
   lines.push('');
   lines.push(`**A. Executive Summary (2–3 sentences, call-ready)**`);
   lines.push(`The paragraph a rep reads 10 minutes before the call. Should communicate: where the practice is today, the single biggest opportunity, and why now.`);
@@ -669,7 +738,8 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
   lines.push('');
   lines.push(`**ACCURACY RULES:** Never fabricate data. Label all estimates as [Estimated]. Tie every recommendation to an observed gap, competitor behavior, or market signal. Do not claim PDM works with the practice without public evidence. If data is unavailable, state it clearly.`);
   lines.push('');
-  lines.push(`**TONE:** This is not a marketing audit. It is an implant growth strategy built around trust, outcomes, and long-term patient transformation. Write it that way.`);
+  lines.push(`**TONE — READ THIS BEFORE YOU WRITE A SINGLE WORD:**`);
+  lines.push(`This is NOT a marketing audit. It is NOT a feature checklist. It is a patient growth strategy built around trust, safety, authority, and long-term transformation. Every section should read like a senior consultant advising a doctor on how to become the most trusted implant provider in their market — not like a vendor listing SEO gaps. Use the language of patient psychology, not marketing jargon. Frame gaps as "patients can't find you / can't trust you / can't commit" — not "you're missing a landing page." The rep who reads this should feel like they have an unfair advantage walking into the discovery call.`);
   lines.push('');
   lines.push(`---`);
   lines.push('');
@@ -908,8 +978,8 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
     ``,
     `## Slide 1: Title`,
     `**${practiceDisplayName}**${locationStr ? ` | ${locationStr}` : ''}`,
-    `Market Opportunity Assessment`,
-    `Prepared for Discovery Call`,
+    `Your Path to Becoming the Most Trusted Implant Provider in ${locationStr || 'Your Market'}`,
+    `Prepared by Progressive Dental Marketing | ${today}`,
     ``,
     `## Slide 2: Your Market Opportunity`,
     `[Fill in: estimated 45+ population within 10-30 miles from your research]`,
@@ -947,7 +1017,27 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
     ``,
     `[Fill in: 2-3 additional competitors with their key advantages from your research]`,
     ``,
-    `## Slide 6: The Cost of Standing Still`,
+    `## Slide 6: Why Patients Choose One Doctor Over Another`,
+    `*"Full-arch patients don't choose the cheapest doctor. They don't choose the closest. They choose the doctor who feels safest."*`,
+    ``,
+    `**The Safety Hierarchy:**`,
+    `1. The doctor who feels safest → Visible experience, calm authority on camera, guided surgery`,
+    `2. The office that looks most experienced → Before/after proof, case volume, technology`,
+    `3. The brand that explains things clearly → Process videos, FAQ content, recovery timeline`,
+    `4. The team that reduces anxiety fastest → Same-day consult, sedation options, first-visit warmth`,
+    ``,
+    `[Fill in: Where does this practice stand on the Safety Hierarchy vs. the #1 competitor?]`,
+    ``,
+    `## Slide 7: The Patient Decision Journey — Where Cases Are Lost`,
+    `**SEARCH** → "Who can fix this?" → [Fill in: ✅/⚠️/❌]`,
+    `**COMPARE** → "Who looks safest?" → [Fill in: ✅/⚠️/❌]`,
+    `**VALIDATE** → "Do others trust them?" → [Fill in: ✅/⚠️/❌]`,
+    `**UNDERSTAND** → "What will happen to me?" → [Fill in: ✅/⚠️/❌]`,
+    `**COMMIT** → "I feel confident enough to call" → [Fill in: ✅/⚠️/❌]`,
+    ``,
+    `Most practices only optimize Step 1. Steps 2–5 are where your competitors are winning cases you generated.`,
+    ``,
+    `## Slide 8: The Cost of Standing Still`,
     primaryCompetitorName && competitorReviewCount != null
       ? `If **${primaryCompetitorName}** continues at current review velocity, they will have [estimate: X] more reviews than ${practiceDisplayName} by this time next year.`
       : `[Fill in: project competitor review velocity 12 months forward]`,
@@ -955,27 +1045,31 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
     `[Fill in: estimated monthly implant cases they're losing to competitors at current trajectory]`,
     `The window to dominate this market is closing. The practices that act now will own it.`,
     ``,
-    `## Slide 7: The Market Domination Strategy`,
+    `## Slide 9: The Market Domination Strategy`,
     `**Primary Channel:** [Fill in: most impactful channel — SEO / Ads / Reputation / Video]`,
     `**Fastest Win:** [Fill in: single highest-ROI action they could take in 30 days]`,
     `**Competitor Weakness to Exploit:** [Fill in: what are competitors NOT doing well that this practice could own?]`,
     `**Best ZIP Codes to Target:** [Fill in: top 3 ZIPs from affluent/high-opportunity area research]`,
     `**Niche to Own:** [Fill in: is there a positioning angle — All-on-4 specialists, same-day implants, sedation, etc.?]`,
     ``,
-    `## Slide 8: What Progressive Dental Marketing Delivers`,
-    `- Dental implant marketing specialists — we only work with dental practices`,
-    `- [Fill in: 2-3 PDM capabilities most relevant to this practice's primary gap type: ${gap}]`,
-    `- Proven results: [Fill in: relevant PDM case study or result for this gap type if you have one]`,
-    `- Dedicated account manager + full team: PPC, SEO, Social, Video, Reputation`,
+    `## Slide 10: The 3-Engine Growth System — What PDM Builds`,
+    `**Engine 1: VISIBILITY** — Getting Found (SEO, Ads, Maps, Reviews)`,
+    `Most marketing companies stop here. It's necessary — but not sufficient.`,
     ``,
-    `## Slide 9: The 90-Day Roadmap`,
-    `**Month 1:** [Fill in: priority 1 action from your strategic recommendations]`,
-    `**Month 2:** [Fill in: priority 2 — build on Month 1 momentum]`,
-    `**Month 3:** [Fill in: priority 3 — compound effect begins, first measurable wins]`,
+    `**Engine 2: AUTHORITY** — Getting Trusted (Doctor video, before/after proof, clinical content)`,
+    `This separates "leads" from "booked consultations." Trust converts.`,
     ``,
-    `[Fill in: specific deliverables for each month based on their gap type and priority]`,
+    `**Engine 3: CONVERSION** — Getting Chosen (Patient psychology, fear reduction, financial confidence)`,
+    `This separates "consultations" from "$30K case acceptances."`,
     ``,
-    `## Slide 10: Next Step`,
+    `[Fill in: Which engine needs the most work for this practice and why?]`,
+    ``,
+    `## Slide 11: The 90-Day Roadmap`,
+    `**Month 1: Foundation & Visibility** — [Fill in: SEO pages, Google Ads launch, review generation, Maps optimization]`,
+    `**Month 2: Safety, Proof & Case Acceptance** — [Fill in: Doctor authority video, before/after gallery, candidacy page, process explainer]`,
+    `**Month 3: Authority Compounding** — [Fill in: YouTube authority channel, content library, retargeting, social proof amplification]`,
+    ``,
+    `## Slide 12: Next Step`,
     `**Discovery Call** — 30 minutes to map your custom strategy`,
     ``,
     `[Fill in: specific call to action based on priority level: ${priorityLevel}]`,
@@ -1005,7 +1099,7 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
   lines.push(`- \`format\`: "presentation"`);
   lines.push(`- \`textMode\`: "generate"`);
   lines.push(`- \`themeId\`: "${themeId}"`);
-  lines.push(`- \`additionalInstructions\`: "Professional B2B sales presentation. 10 slides. Data-driven, persuasive, clean. Target audience: dental practice owner or office manager. Emphasize urgency, competitor threat, and market opportunity. Strong headlines. Minimal text per slide — let the data speak."`);
+  lines.push(`- \`additionalInstructions\`: "Professional B2B sales presentation. 12 slides. Target audience: dental practice owner who does implant cases. Tone: senior consultant, not vendor. Frame everything through patient trust, safety, and authority — not marketing jargon. Use bold aspirational headlines ('Become the Most Trusted Implant Provider in [City]' not 'SEO Recommendations'). Minimal text per slide — visual impact, data callouts, and one clear takeaway per slide. Include the Safety Hierarchy and Patient Decision Journey as visual frameworks. Urgency through competitor data, not pressure."`);
   lines.push(``);
   lines.push(`**Immediately after Gamma returns gammaUrl, call sf_save_deck_url with these exact values:**`);
   if (resolvedLeadId)    lines.push(`- \`leadId\`: "${resolvedLeadId}"`);

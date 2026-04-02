@@ -11,5 +11,8 @@ node_modules/
 # Claude Code local settings
 .claude/
 
+# Telegram user registry (contains chat IDs)
+data/telegram-users.json
+
 # OS
 .DS_Store

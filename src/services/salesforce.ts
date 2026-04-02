@@ -403,6 +403,11 @@ class SalesforceService {
     return this.query<T>(soql);
   }
 
+  /** Expose authenticated connection for Metadata API consumers */
+  async getConn(): Promise<jsforce.Connection> {
+    return this.getConnection();
+  }
+
   /** Update a single Salesforce record by ID */
   async updateRecord(objectType: string, id: string, fields: Record<string, unknown>): Promise<void> {
     assertSfId(id, `${objectType} ID`);
