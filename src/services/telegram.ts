@@ -723,7 +723,15 @@ export async function initTelegram(
       return;
     }
 
-    await handleTextMessage(ctx, user, text);
+    // Fire-and-forget: DO NOT await handleTextMessage.
+    // grammY processes messages sequentially — if we await a 30-second tool call,
+    // the "Stop" command queues behind it and can't cancel anything.
+    // By not awaiting, grammY returns immediately and can process "Stop" in parallel.
+    handleTextMessage(ctx, user, text).catch(err => {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[Prophet Telegram] Unhandled error in handleTextMessage: ${msg}\n`);
+      ctx.reply(`Something went wrong: ${msg}`).catch(() => {});
+    });
   });
 
   // ── Callback Queries (Inline Buttons) ───────────────────────────────────
