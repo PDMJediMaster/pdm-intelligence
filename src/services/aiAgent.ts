@@ -332,7 +332,8 @@ You have access to Prophet tools that query live Salesforce data. Use them to:
 export async function runAgent(
   userMessage: string,
   user: ProphetUser,
-  toolHandlers: Record<string, (args: unknown) => Promise<string>>
+  toolHandlers: Record<string, (args: unknown) => Promise<string>>,
+  cancelSignal?: { cancelled: boolean }
 ): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -358,6 +359,11 @@ export async function runAgent(
   let iteration = 0;
 
   while (response.stop_reason === 'tool_use' && iteration < MAX_ITERATIONS) {
+    // Check cancellation before each iteration
+    if (cancelSignal?.cancelled) {
+      return ''; // Silently abort — Stop already acknowledged
+    }
+
     iteration++;
 
     // Collect all tool use blocks

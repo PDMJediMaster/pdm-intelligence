@@ -665,12 +665,12 @@ export async function initTelegram(
     // ── "Stop" Command — Cancel In-Progress Response ─────────────────────
     if (/^stop$/i.test(text)) {
       const active = activeRequests.get(chatId);
-      if (active) {
+      if (active && !active.cancelled) {
         active.cancelled = true;
-        await ctx.reply('Stopped. What would you like to do next?');
-      } else {
-        await ctx.reply('Nothing running right now. What can I help with?');
+        activeRequests.delete(chatId); // Remove so subsequent Stops don't re-fire
+        await ctx.reply('🛑 Stopped.');
       }
+      // Always silently return — no "nothing running" noise
       return;
     }
 
@@ -800,7 +800,7 @@ async function handleTextMessage(ctx: Context, user: ProphetUser, text: string):
 
       try {
         process.stderr.write(`[Prophet Agent] Processing: "${text.slice(0, 80)}..." for ${user.name}\n`);
-        const agentResponse = await runAgent(text, user, toolHandlers);
+        const agentResponse = await runAgent(text, user, toolHandlers, reqState);
 
         if (reqState.cancelled) return; // User said Stop
 
