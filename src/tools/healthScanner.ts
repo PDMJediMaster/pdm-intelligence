@@ -22,7 +22,7 @@ import { z } from 'zod';
 import { salesforceService } from '../services/salesforce.js';
 import { proxyHealthScore } from '../services/healthScoring.js';
 import { WILLIAM_SUMMERS_USER_ID } from './accountManagement.js';
-import { INACTIVE_STATUS_VALUES, ACTIVE_CLIENT_FILTER, ACTIVE_ROLE_FILTER, statusLabel } from './healthReports.js';
+import { INACTIVE_STATUS_VALUES, ACTIVE_CLIENT_FILTER, ACTIVE_ROLE_FILTER, statusLabel, RADIO_SILENCE_DAYS, RADIO_SILENCE_MEETING_WINDOW } from './healthReports.js';
 
 // ─── Salesforce Types ─────────────────────────────────────────────────────────
 
@@ -35,6 +35,7 @@ interface SFAccount {
   Account_Manager_Lookup__c?: string;
   Account_Manager_Lookup__r?: { Name: string };
   LastActivityDate?: string;
+  Next_Alignment_Call__c?: string;
   Contract_Renewal_Date__c?: string;
   Health_Score__c?: number;
   Health_Tier__c?: string;
@@ -127,7 +128,7 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
   const accounts = await salesforceService.rawQuery<SFAccount>(
     `SELECT Id, Name, Status__c, OwnerId, Owner.Name,
             Account_Manager_Lookup__c, Account_Manager_Lookup__r.Name,
-            LastActivityDate, Contract_Renewal_Date__c,
+            LastActivityDate, Next_Alignment_Call__c, Contract_Renewal_Date__c,
             Health_Score__c, Health_Tier__c,
             Cancellation_or_Pause_Request_Date__c, Flagged_Status__c,
             Delinquent__c, Total_Monthly_Recurring_Amount__c
@@ -212,6 +213,32 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
     }
 
     if (account.Delinquent__c) riskFactors.push('Billing delinquency');
+
+    // ── Radio Silence Detection ─────────────────────────────────────────
+    if (daysSinceActivity !== null && daysSinceActivity >= RADIO_SILENCE_DAYS) {
+      const nextCall = account.Next_Alignment_Call__c;
+      const hasMeetingSoon = nextCall
+        ? Math.floor((new Date(nextCall).getTime() - Date.now()) / 86_400_000) <= RADIO_SILENCE_MEETING_WINDOW
+          && new Date(nextCall).getTime() > Date.now()
+        : false;
+
+      if (!hasMeetingSoon) {
+        newScore = Math.max(0, newScore - 20);
+        riskFactors.push(`Radio silence: ${daysSinceActivity}d no contact, no meeting in ${RADIO_SILENCE_MEETING_WINDOW}d`);
+      } else {
+        riskFactors.push(`Radio silence: ${daysSinceActivity}d no contact (meeting scheduled ${nextCall})`);
+      }
+    } else if (daysSinceActivity === null) {
+      const nextCall = account.Next_Alignment_Call__c;
+      const hasMeetingSoon = nextCall
+        ? Math.floor((new Date(nextCall).getTime() - Date.now()) / 86_400_000) <= RADIO_SILENCE_MEETING_WINDOW
+          && new Date(nextCall).getTime() > Date.now()
+        : false;
+      if (!hasMeetingSoon) {
+        newScore = Math.max(0, newScore - 15);
+        riskFactors.push('Radio silence: No activity on record, no meeting scheduled');
+      }
+    }
 
     const oldTier = account.Health_Tier__c;
     const newTier = scoreToTier(newScore);
@@ -688,6 +715,21 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
     lines.push('');
   }
 
+  // Radio Silence Report
+  const radioSilentResults = results.filter(r => r.riskFactors.some(f => f.startsWith('Radio silence:')));
+  if (radioSilentResults.length > 0) {
+    lines.push(`## 📡 Radio Silence Accounts (${radioSilentResults.length})`);
+    lines.push(`*${RADIO_SILENCE_DAYS}+ days with no contact. AMs must schedule outreach immediately.*`);
+    lines.push('');
+    for (const r of radioSilentResults) {
+      const mrrStr = r.mrr ? ` | $${r.mrr.toLocaleString()}/mo` : '';
+      const silenceFactor = r.riskFactors.find(f => f.startsWith('Radio silence:')) ?? '';
+      lines.push(`${tierEmoji(r.newTier)} **${r.name}** | Score: ${r.newScore} | AM: ${r.amName}${mrrStr}`);
+      lines.push(`  ${silenceFactor}`);
+    }
+    lines.push('');
+  }
+
   // Onboarding Gap Report
   if (onboardingGapAccounts.length > 0) {
     lines.push(`## 📋 Missing Onboarding Records — Active Clients Since Feb 1, 2026 (${onboardingGapAccounts.length})`);
@@ -804,6 +846,7 @@ async function handleHealthScan(rawArgs: unknown): Promise<string> {
       newTier: r.newTier,
       amName:  r.amName,
     })),
+    radioSilentCount: radioSilentResults.length,
     onboardingGap: onboardingGapAccounts.length,
     orphanedZoomCalls: totalOrphaned,
     orphanedCallsMatched: highConfMatches + matchedTasks,

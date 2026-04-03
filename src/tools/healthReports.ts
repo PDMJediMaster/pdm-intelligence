@@ -12,6 +12,11 @@ import type { SalesforceRefundRequest, SalesforceCancellationRequest } from '../
 
 // ─── Governance Constants ──────────────────────────────────────────────────
 
+/** Radio silence: no contact in this many days = red flag */
+export const RADIO_SILENCE_DAYS = 45;
+/** If a meeting is scheduled within this many days, downgrade from red flag to warning */
+export const RADIO_SILENCE_MEETING_WINDOW = 15;
+
 // ─── Status__c Picklist — API Name ↔ Label Mapping ─────────────────────────
 // Salesforce picklist API Names are NUMERIC for NetSuite integration.
 // SOQL returns and filters on API Names, NOT labels.
@@ -294,6 +299,26 @@ async function handleHealthReport(rawArgs: unknown): Promise<string> {
   if (accountRaw.Flagged_Status__c)                      flags.push('🚩 FLAGGED');
   if (accountRaw.Cancellation_or_Pause_Request_Date__c)  flags.push(`🚨 CANCEL/PAUSE REQUEST (${accountRaw.Cancellation_or_Pause_Request_Date__c})`);
   if (accountRaw.Upsell_Opportunity__c)                  flags.push(`💡 UPSELL: ${accountRaw.Upsell_Opportunity__c}`);
+
+  // Radio silence detection
+  const daysSinceLastActivity = accountRaw.LastActivityDate
+    ? Math.floor((Date.now() - new Date(accountRaw.LastActivityDate).getTime()) / 86_400_000)
+    : null;
+  const nextAlignmentCall = accountRaw.Next_Alignment_Call__c;
+  const hasMeetingSoon = nextAlignmentCall
+    ? Math.floor((new Date(nextAlignmentCall).getTime() - Date.now()) / 86_400_000) <= RADIO_SILENCE_MEETING_WINDOW
+      && new Date(nextAlignmentCall).getTime() > Date.now()
+    : false;
+
+  if (daysSinceLastActivity !== null && daysSinceLastActivity >= RADIO_SILENCE_DAYS) {
+    if (hasMeetingSoon) {
+      flags.push(`📡 Radio silence (${daysSinceLastActivity}d) — meeting ${nextAlignmentCall}`);
+    } else {
+      flags.push(`📡 RADIO SILENCE — ${daysSinceLastActivity}d no contact, no meeting in next ${RADIO_SILENCE_MEETING_WINDOW}d`);
+    }
+  } else if (daysSinceLastActivity === null && !hasMeetingSoon) {
+    flags.push(`📡 RADIO SILENCE — No activity on record, no meeting scheduled`);
+  }
   if (flags.length > 0) {
     lines.push(`**Signals:** ${flags.join(' | ')}`);
   }
@@ -473,6 +498,36 @@ async function handleChurnRisk(rawArgs: unknown): Promise<string> {
 
     // Additional deductions for new churn signals
     let score = baseScore;
+
+    // ── Radio Silence Detection (45d no contact + 15d calendar check) ─────
+    if (daysSinceActivity !== null && daysSinceActivity >= RADIO_SILENCE_DAYS) {
+      const nextCall = account.Next_Alignment_Call__c;
+      const hasMeetingSoon = nextCall
+        ? Math.floor((new Date(nextCall).getTime() - Date.now()) / 86_400_000) <= RADIO_SILENCE_MEETING_WINDOW
+          && new Date(nextCall).getTime() > Date.now()
+        : false;
+
+      if (hasMeetingSoon) {
+        score = Math.max(0, score - 5);
+        riskFactors.push(`📡 Radio silence (${daysSinceActivity}d) — meeting scheduled ${nextCall}`);
+      } else {
+        score = Math.max(0, score - 20);
+        riskFactors.push(`📡 RADIO SILENCE — ${daysSinceActivity}d with no contact, no meeting in next ${RADIO_SILENCE_MEETING_WINDOW}d`);
+      }
+    } else if (daysSinceActivity === null) {
+      // No activity on record at all — already penalized by proxyHealthScore but flag it
+      const nextCall = account.Next_Alignment_Call__c;
+      const hasMeetingSoon = nextCall
+        ? Math.floor((new Date(nextCall).getTime() - Date.now()) / 86_400_000) <= RADIO_SILENCE_MEETING_WINDOW
+          && new Date(nextCall).getTime() > Date.now()
+        : false;
+
+      if (!hasMeetingSoon) {
+        score = Math.max(0, score - 15);
+        riskFactors.push(`📡 RADIO SILENCE — No activity on record, no meeting scheduled`);
+      }
+    }
+
     if (account.Delinquent__c) {
       score = Math.max(0, score - 20);
       riskFactors.push('Delinquent billing');

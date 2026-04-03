@@ -6,7 +6,7 @@ import {
   detectProducts,
   generateTalkingPoints,
 } from '../services/healthScoring.js';
-import { statusLabel } from './healthReports.js';
+import { statusLabel, RADIO_SILENCE_DAYS, RADIO_SILENCE_MEETING_WINDOW } from './healthReports.js';
 import { PDM_PRODUCT_LIST, PRODUCT_KEYWORDS } from '../constants.js';
 import type {
   SalesforceAsset,
@@ -214,7 +214,19 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
   const orphanLookback    = new Date(Date.now() - 14 * 86_400_000).toISOString().split('T')[0];
   const orphanOwnerFilter = owner_id ? `AND OwnerId = '${owner_id}'` : '';
 
-  const [scheduledAccounts, openRefundRequests, upcomingRenewals, orphanedZoomTasks] = await Promise.all([
+  // ── Radio Silence query — accounts with 45+ days no contact ─────────────
+  interface RadioSilentAccount {
+    Id: string; Name: string; Status__c?: string;
+    LastActivityDate?: string; Next_Alignment_Call__c?: string;
+    Total_Monthly_Recurring_Amount__c?: number;
+    OwnerId: string; Owner?: { Name: string };
+    AM_Spoke_to_Doctor__c?: string;
+  }
+
+  const radioSilenceCutoff = new Date(Date.now() - RADIO_SILENCE_DAYS * 86_400_000).toISOString().split('T')[0];
+  const radioSilenceOwnerFilter = owner_id ? `AND OwnerId = '${owner_id}'` : '';
+
+  const [scheduledAccounts, openRefundRequests, upcomingRenewals, orphanedZoomTasks, radioSilentAccounts] = await Promise.all([
     scheduledAccountIds.length > 0
       ? salesforceService.rawQuery<ScheduledAccount>(
           `SELECT Id, Name, Status__c, Total_Monthly_Recurring_Amount__c, Tier__c,
@@ -272,6 +284,22 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
        ORDER BY ActivityDate DESC
        LIMIT 25`
     ).catch(() => [] as OrphanTask[]),
+
+    // Radio silence — accounts with no activity in 45+ days
+    salesforceService.rawQuery<RadioSilentAccount>(
+      `SELECT Id, Name, Status__c, LastActivityDate, Next_Alignment_Call__c,
+              Total_Monthly_Recurring_Amount__c, OwnerId, Owner.Name,
+              AM_Spoke_to_Doctor__c
+       FROM Account
+       WHERE ${ACTIVE_CLIENT_FILTER}
+         AND (NOT Name LIKE '%Test%') AND (NOT Name LIKE '%test%') AND Name != 'House of Mouse'
+         AND ${ACTIVE_ROLE_FILTER}
+         AND OwnerId != '${WILLIAM_SUMMERS_USER_ID}'
+         ${radioSilenceOwnerFilter}
+         AND (LastActivityDate < ${radioSilenceCutoff} OR LastActivityDate = null)
+       ORDER BY LastActivityDate ASC NULLS FIRST
+       LIMIT 30`
+    ).catch(() => [] as RadioSilentAccount[]),
   ]);
 
   // Build refund map by account
@@ -312,6 +340,67 @@ async function handleWeeklySynopsis(rawArgs: unknown): Promise<string> {
     lines.push('');
     lines.push('**To fix:** Open each call in Salesforce → Edit → set the Account field. Or ask Prophet to link them for you.');
     lines.push('');
+    lines.push('---');
+    lines.push('');
+  }
+
+  // ── Section 0.5: Radio Silence Alerts ─────────────────────────────────────
+  if (radioSilentAccounts.length > 0) {
+    // Separate confirmed red flags from warnings (meeting scheduled)
+    const confirmed: RadioSilentAccount[] = [];
+    const warnings: RadioSilentAccount[] = [];
+
+    for (const acct of radioSilentAccounts) {
+      const nextCall = acct.Next_Alignment_Call__c;
+      const hasMeetingSoon = nextCall
+        ? Math.floor((new Date(nextCall).getTime() - Date.now()) / 86_400_000) <= RADIO_SILENCE_MEETING_WINDOW
+          && new Date(nextCall).getTime() > Date.now()
+        : false;
+
+      if (hasMeetingSoon) {
+        warnings.push(acct);
+      } else {
+        confirmed.push(acct);
+      }
+    }
+
+    if (confirmed.length > 0) {
+      lines.push(`## 📡 RADIO SILENCE — ${confirmed.length} Account${confirmed.length > 1 ? 's' : ''} with ${RADIO_SILENCE_DAYS}+ Days No Contact`);
+      lines.push(`*These accounts have had zero contact in ${RADIO_SILENCE_DAYS}+ days AND have no meeting scheduled in the next ${RADIO_SILENCE_MEETING_WINDOW} days. They need immediate outreach.*`);
+      lines.push('');
+      for (const acct of confirmed) {
+        const silentDays = acct.LastActivityDate
+          ? Math.floor((Date.now() - new Date(acct.LastActivityDate).getTime()) / 86_400_000)
+          : null;
+        const mrr = acct.Total_Monthly_Recurring_Amount__c
+          ? `$${acct.Total_Monthly_Recurring_Amount__c.toLocaleString()}/mo`
+          : 'MRR unknown';
+        const ownerName = (acct.Owner as { Name?: string } | undefined)?.Name ?? 'Unknown';
+        const silentStr = silentDays !== null ? `${silentDays}d silent` : 'No activity on record';
+
+        lines.push(`- 🔴 **${acct.Name}** | ${silentStr} | ${mrr} | Status: ${statusLabel(acct.Status__c)} | Owner: ${ownerName}`);
+      }
+      lines.push('');
+    }
+
+    if (warnings.length > 0) {
+      lines.push(`## 📡 Radio Silence — Meeting Scheduled (${warnings.length})`);
+      lines.push(`*These accounts have ${RADIO_SILENCE_DAYS}+ days no contact but DO have a meeting coming up.*`);
+      lines.push('');
+      for (const acct of warnings) {
+        const silentDays = acct.LastActivityDate
+          ? Math.floor((Date.now() - new Date(acct.LastActivityDate).getTime()) / 86_400_000)
+          : null;
+        const mrr = acct.Total_Monthly_Recurring_Amount__c
+          ? `$${acct.Total_Monthly_Recurring_Amount__c.toLocaleString()}/mo`
+          : 'MRR unknown';
+        const silentStr = silentDays !== null ? `${silentDays}d silent` : 'No activity on record';
+
+        lines.push(`- 🟡 **${acct.Name}** | ${silentStr} | Next call: ${acct.Next_Alignment_Call__c} | ${mrr}`);
+      }
+      lines.push('');
+    }
+
     lines.push('---');
     lines.push('');
   }
