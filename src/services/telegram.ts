@@ -52,6 +52,11 @@ const USER_REGISTRY_FILE = `${USER_REGISTRY_DIR}/telegram-users.json`;
 let registeredUsers: Map<number, ProphetUser> = new Map();
 let pendingActions: Map<number, PendingAction> = new Map();
 
+// ─── Active Request Cancellation ────────────────────────────────────────────
+// When a user says "Stop", we set their cancelled flag to true.
+// All message-sending loops check this flag before sending each chunk.
+const activeRequests: Map<number, { cancelled: boolean }> = new Map();
+
 async function loadUserRegistry(): Promise<void> {
   try {
     const fs = await import('node:fs/promises');
@@ -526,6 +531,8 @@ export async function initTelegram(
       `- Send a photo — I'll extract any notes or info\n\n` +
       `<b>Coaching & Growth:</b>\n` +
       `- "Coaching" — AM performance brief\n\n` +
+      `<b>Control:</b>\n` +
+      `- "Stop" — Cancel the current response\n\n` +
       `<b>Settings:</b>\n` +
       `/morning on — Enable 6:30 AM daily brief\n` +
       `/morning off — Disable daily brief\n` +
@@ -655,6 +662,18 @@ export async function initTelegram(
     const chatId = ctx.chat.id;
     const text = ctx.message.text.trim();
 
+    // ── "Stop" Command — Cancel In-Progress Response ─────────────────────
+    if (/^stop$/i.test(text)) {
+      const active = activeRequests.get(chatId);
+      if (active) {
+        active.cancelled = true;
+        await ctx.reply('Stopped. What would you like to do next?');
+      } else {
+        await ctx.reply('Nothing running right now. What can I help with?');
+      }
+      return;
+    }
+
     // Check if this is a registration reply (email address)
     if (!registeredUsers.has(chatId) && text.includes('@')) {
       await handleRegistration(ctx, text);
@@ -759,73 +778,91 @@ export async function initTelegram(
 // ─── Handle Text Message Routing ─────────────────────────────────────────────
 
 async function handleTextMessage(ctx: Context, user: ProphetUser, text: string): Promise<void> {
+  const chatId = ctx.chat?.id ?? 0;
   const route = routeMessage(text, user);
 
-  if (!route) {
-    // No regex match — hand off to the AI agent for reasoning
-    await ctx.replyWithChatAction('typing');
-
-    try {
-      process.stderr.write(`[Prophet Agent] Processing: "${text.slice(0, 80)}..." for ${user.name}\n`);
-      const agentResponse = await runAgent(text, user, toolHandlers);
-      const formatted = formatForTelegram(agentResponse);
-      const chunks = splitMessage(formatted);
-
-      for (const chunk of chunks) {
-        await ctx.reply(chunk, { parse_mode: 'HTML' });
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`[Prophet Agent] Error: ${msg}\n`);
-
-      // Fallback to quick actions if agent fails
-      const keyboard = new InlineKeyboard()
-        .text('📋 My Week', 'tool:sf_get_weekly_synopsis:{}')
-        .text('🚨 Churn Risk', 'tool:sf_get_churn_risk_accounts:{}')
-        .row()
-        .text('🔄 Renewals', 'tool:sf_get_renewal_pipeline:{}')
-        .text('📈 Upsells', 'tool:sf_get_upsell_opportunities:{}');
-
-      await ctx.reply(
-        `I ran into an issue processing that. Try a direct command:\n\n` +
-        `- <i>"How is [account name] doing?"</i>\n` +
-        `- <i>"Brief me for [account]"</i>\n` +
-        `- <i>"My week"</i>\n`,
-        { parse_mode: 'HTML', reply_markup: keyboard }
-      );
-    }
-    return;
-  }
-
-  // Send typing indicator
-  await ctx.replyWithChatAction('typing');
+  // Register this as an active request so "Stop" can cancel it
+  const reqState = { cancelled: false };
+  activeRequests.set(chatId, reqState);
 
   try {
-    const handler = toolHandlers[route.tool];
-    if (!handler) {
-      await ctx.reply(`Tool "${route.tool}" is not available on this server.`);
+    if (!route) {
+      // No regex match — hand off to the AI agent for reasoning
+      await ctx.replyWithChatAction('typing');
+
+      try {
+        process.stderr.write(`[Prophet Agent] Processing: "${text.slice(0, 80)}..." for ${user.name}\n`);
+        const agentResponse = await runAgent(text, user, toolHandlers);
+
+        if (reqState.cancelled) return; // User said Stop
+
+        const formatted = formatForTelegram(agentResponse);
+        const chunks = splitMessage(formatted);
+
+        for (const chunk of chunks) {
+          if (reqState.cancelled) return; // Check before each chunk
+          await ctx.reply(chunk, { parse_mode: 'HTML' });
+        }
+      } catch (err) {
+        if (reqState.cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[Prophet Agent] Error: ${msg}\n`);
+
+        const keyboard = new InlineKeyboard()
+          .text('📋 My Week', 'tool:sf_get_weekly_synopsis:{}')
+          .text('🚨 Churn Risk', 'tool:sf_get_churn_risk_accounts:{}')
+          .row()
+          .text('🔄 Renewals', 'tool:sf_get_renewal_pipeline:{}')
+          .text('📈 Upsells', 'tool:sf_get_upsell_opportunities:{}');
+
+        await ctx.reply(
+          `I ran into an issue processing that. Try a direct command:\n\n` +
+          `- <i>"How is [account name] doing?"</i>\n` +
+          `- <i>"Brief me for [account]"</i>\n` +
+          `- <i>"My week"</i>\n`,
+          { parse_mode: 'HTML', reply_markup: keyboard }
+        );
+      }
       return;
     }
 
-    // Merge user context into args where needed
-    const args = { ...route.args };
-    if (!args.owner_id && !args.ownerId && !args.amUserId && !args.repUserId) {
-      // Don't auto-inject for account-specific queries
-      if (!args.accountName && !args.accountId && !args.practiceName) {
-        args.owner_id = user.salesforceUserId;
+    // Send typing indicator
+    await ctx.replyWithChatAction('typing');
+
+    try {
+      const handler = toolHandlers[route.tool];
+      if (!handler) {
+        await ctx.reply(`Tool "${route.tool}" is not available on this server.`);
+        return;
       }
-    }
 
-    const result = await handler(args);
-    const formatted = formatForTelegram(result);
-    const chunks = splitMessage(formatted);
+      // Merge user context into args where needed
+      const args = { ...route.args };
+      if (!args.owner_id && !args.ownerId && !args.amUserId && !args.repUserId) {
+        if (!args.accountName && !args.accountId && !args.practiceName) {
+          args.owner_id = user.salesforceUserId;
+        }
+      }
 
-    for (const chunk of chunks) {
-      await ctx.reply(chunk, { parse_mode: 'HTML' });
+      const result = await handler(args);
+
+      if (reqState.cancelled) return; // User said Stop while tool was running
+
+      const formatted = formatForTelegram(result);
+      const chunks = splitMessage(formatted);
+
+      for (const chunk of chunks) {
+        if (reqState.cancelled) return; // Check before each chunk
+        await ctx.reply(chunk, { parse_mode: 'HTML' });
+      }
+    } catch (err) {
+      if (reqState.cancelled) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      await ctx.reply(`Something went wrong running <b>${route.description}</b>:\n\n<code>${msg}</code>`, { parse_mode: 'HTML' });
     }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await ctx.reply(`Something went wrong running <b>${route.description}</b>:\n\n<code>${msg}</code>`, { parse_mode: 'HTML' });
+  } finally {
+    // Clean up active request
+    activeRequests.delete(chatId);
   }
 }
 
@@ -932,6 +969,10 @@ export async function sendProactiveMessage(
   const chunks = splitMessage(formatForTelegram(message));
 
   for (let i = 0; i < chunks.length; i++) {
+    // Check if user said "Stop" before sending each chunk
+    const reqState = activeRequests.get(chatId);
+    if (reqState?.cancelled) return;
+
     const isLast = i === chunks.length - 1;
     await b.api.sendMessage(chatId, chunks[i], {
       parse_mode: 'HTML',
