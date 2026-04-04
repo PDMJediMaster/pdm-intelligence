@@ -209,6 +209,16 @@ export const prospectResearchTools: Tool[] = [
           type: 'string',
           description: 'Qualitative notes on the competitor — what makes them a threat',
         },
+        leadSource: {
+          type: 'string',
+          description: 'Override LeadSource when creating a new Lead (default: "PDM Research Tool"). ' +
+            'Use "PDM Prophet Scan" for auto-generated leads from market scanning.',
+        },
+        ownerId: {
+          type: 'string',
+          description: 'Override OwnerId when creating a new Lead. ' +
+            'Use "005PU000009AWCkYAO" (Service Account) for auto-gen leads routed to Kubaru round-robin.',
+        },
       },
       required: ['marketingMaturityScore', 'likelihoodToBuyScore', 'priorityLevel', 'primaryGapType', 'researchSummary'],
     },
@@ -274,6 +284,9 @@ const SaveResearchScoresArgs = z.object({
   priorityLevel:              z.enum(VALID_PRIORITY_LEVELS),
   primaryGapType:             z.enum(VALID_GAP_TYPES),
   researchSummary:            z.string().max(500),
+  // Lead creation overrides (for auto-scan pipeline)
+  leadSource:                 z.string().optional(),
+  ownerId:                    z.string().optional(),
   // Competitor snapshot fields (optional)
   primaryCompetitorName:      z.string().optional(),
   primaryCompetitorWebsite:   z.string().optional(),
@@ -787,6 +800,8 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
     competitorPressureScore,
     competitorPrimaryServices,
     competitorNotes,
+    leadSource,
+    ownerId,
   } = SaveResearchScoresArgs.parse(rawArgs ?? {});
 
   const lines: string[] = [];
@@ -813,9 +828,10 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
         LastName:   practiceName ?? websiteUrl ?? 'Unknown Practice',
         Company:    practiceName ?? websiteUrl ?? 'Unknown Practice',
         Email:      `research.${nameForEmail}@progressivedental.com`,
-        LeadSource: 'PDM Research Tool',
+        LeadSource: leadSource ?? 'PDM Research Tool',
         Status:     'Open - Not Contacted',
       };
+      if (ownerId) newLeadFields['OwnerId'] = ownerId;
       if (city)       newLeadFields['City']      = city;
       if (state)      newLeadFields['StateCode'] = state;  // StateCode required when State/Country Picklists enabled
       if (websiteUrl) newLeadFields['Website']   = websiteUrl;
