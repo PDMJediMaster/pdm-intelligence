@@ -114,6 +114,7 @@ interface EnrichedPractice {
   pdmSolution?: string;
   estMarketingMaturity?: number;
   notes?: string;
+  scanTier?: string;
   source: string;
   address?: string;
 }
@@ -152,6 +153,7 @@ const AutoLeadScanArgs = z.object({
   max_results: z.number().min(1).max(100).default(50),
   practices:   z.array(PracticeInput).optional(),
   send_email:  z.boolean().default(true),
+  scan_tier:   z.string().optional(),
 });
 
 // ─── Tool Definition ─────────────────────────────────────────────────────────
@@ -776,6 +778,7 @@ async function createLeads(
       if (practice.bestOutreachAngle)  fields['Best_Outreach_Angle__c'] = practice.bestOutreachAngle;
       if (practice.bestPoachLever)     fields['Best_Poach_Lever__c']    = practice.bestPoachLever;
       if (practice.pdmSolution)        fields['PDM_Solution__c']        = practice.pdmSolution;
+      if (practice.scanTier)           fields['Scan_Tier__c']           = practice.scanTier;
 
       const leadId = await salesforceService.createRecord('Lead', fields);
       created.push({ id: leadId, name: practice.name, website: practice.website, city, state, enriched: practice });
@@ -813,7 +816,7 @@ function buildEmailBody(created: CreatedLead[], market: string): string {
 
 async function handleAutoLeadScan(rawArgs: unknown): Promise<string> {
   const args = AutoLeadScanArgs.parse(rawArgs ?? {});
-  const { city, state, max_results, practices: importedPractices, send_email } = args;
+  const { city, state, max_results, practices: importedPractices, send_email, scan_tier } = args;
 
   const lines: string[] = [];
   let candidates: PracticeCandidate[] = [];
@@ -927,6 +930,11 @@ async function handleAutoLeadScan(rawArgs: unknown): Promise<string> {
   lines.push('');
 
   const allEnriched = await enrichPractices(newPractices);
+
+  // Stamp scan tier on all enriched practices
+  if (scan_tier) {
+    for (const p of allEnriched) p.scanTier = scan_tier;
+  }
   const enrichedCount = allEnriched.filter(p => p.doctor || p.serviceGaps || p.readyToBuyScore).length;
   lines.push(`**Enriched:** ${enrichedCount}/${allEnriched.length} practices analyzed via website scrape + AI`);
 
@@ -1063,6 +1071,7 @@ async function handleAutoLeadScan(rawArgs: unknown): Promise<string> {
     pdm_solution: l.enriched?.pdmSolution || '',
     est_marketing_maturity: l.enriched?.estMarketingMaturity || '',
     notes: l.enriched?.notes || '',
+    scan_tier: l.enriched?.scanTier || scan_tier || '',
   }));
 
   const revivedDetails = revivedLeads.map(l => ({
@@ -1076,6 +1085,7 @@ async function handleAutoLeadScan(rawArgs: unknown): Promise<string> {
     best_outreach_angle: '', services_from_agency: '',
     service_gaps: '', best_poach_lever: '', pdm_solution: '',
     est_marketing_maturity: '', notes: `Revived after ${l.daysSinceActivity ?? '?'} days inactive`,
+    scan_tier: scan_tier || '',
   }));
 
   lines.push(JSON.stringify({
