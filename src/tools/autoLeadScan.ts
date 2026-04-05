@@ -361,7 +361,7 @@ async function dedup(
     ).catch(() => [] as SFRecord[]),
     salesforceService.rawQuery<SFRecord>(
       `SELECT Id, Name, Website, Status__c FROM Account ` +
-      `WHERE (${acctLike}) AND Status__c IN (${statusFilter}) LIMIT 200`
+      `WHERE (${acctLike}) AND (Status__c IN (${statusFilter}) OR TCI_Status__c = 'Member') LIMIT 200`
     ).catch(() => [] as SFRecord[]),
   ]);
 
