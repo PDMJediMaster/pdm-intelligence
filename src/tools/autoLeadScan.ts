@@ -753,7 +753,9 @@ async function createLeads(
       const fields: Record<string, unknown> = {
         LastName:   practice.name,
         Company:    practice.name,
-        Email:      practice.email || `scan.${slug}@progressivedental.com`,
+        Email:      (practice.email && practice.email.includes('@') && !practice.email.toLowerCase().includes('unknown'))
+                      ? practice.email
+                      : `scan.${slug}@progressivedental.com`,
         LeadSource: 'PDM Prophet Scan',
         OwnerId:    SERVICE_ACCOUNT_ID,
         Status:     'Open - Not Contacted',
