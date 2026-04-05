@@ -15,6 +15,7 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import Anthropic from '@anthropic-ai/sdk';
 import { salesforceService } from '../services/salesforce.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -91,12 +92,39 @@ interface SFRecord {
   LeadSource?: string;
 }
 
+interface EnrichedPractice {
+  name: string;
+  website?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  phone?: string;
+  email?: string;
+  doctor?: string;
+  pointOfContact?: string;
+  pocRole?: string;
+  likelyVendor?: string;
+  funnelType?: string;
+  priorityScore?: number;
+  readyToBuyScore?: number;
+  bestOutreachAngle?: string;
+  servicesFromAgency?: string;
+  serviceGaps?: string;
+  bestPoachLever?: string;
+  pdmSolution?: string;
+  estMarketingMaturity?: number;
+  notes?: string;
+  source: string;
+  address?: string;
+}
+
 interface CreatedLead {
   id: string;
   name: string;
   website?: string;
   city?: string;
   state?: string;
+  enriched?: EnrichedPractice;
 }
 
 interface RevivedLead {
@@ -316,6 +344,166 @@ async function crawlMarket(
   return { candidates, rawCount: allResults.length, queryCount: queries.length };
 }
 
+// ─── Firecrawl Scrape ────────────────────────────────────────────────────────
+
+async function scrapePracticeWebsite(url: string): Promise<string> {
+  const apiKey = process.env.FIRECRAWL_API_KEY;
+  if (!apiKey) return '';
+
+  try {
+    const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        url,
+        formats: ['markdown'],
+        onlyMainContent: true,
+        timeout: 15000,
+      }),
+    });
+
+    if (!response.ok) return '';
+    const data = await response.json() as { success: boolean; data?: { markdown?: string } };
+    if (!data.success) return '';
+
+    // Truncate to 8000 chars to keep Claude context manageable
+    return (data.data?.markdown ?? '').substring(0, 8000);
+  } catch {
+    return '';
+  }
+}
+
+// ─── AI Practice Enrichment ─────────────────────────────────────────────────
+
+const ENRICHMENT_PROMPT = `You are a dental marketing intelligence analyst for Progressive Dental Marketing (PDM).
+Analyze this dental practice's website content and extract structured intelligence for a sales outreach campaign.
+
+PDM sells: PPC/Google Ads, SEO, Social Media Marketing, Website Development, Video Production, Graphic Design, and TCI Mentorship (case acceptance training).
+
+Extract the following fields. If data is not available from the website, make your best inference or write "Unknown".
+
+Return ONLY valid JSON with these exact keys:
+{
+  "doctor": "Primary doctor/dentist name (Dr. Last Name)",
+  "point_of_contact": "Best person to reach (doctor name or office manager if found)",
+  "poc_role": "Doctor / Office Manager / Practice Administrator",
+  "phone": "Main phone number",
+  "email": "Contact email if found",
+  "zip": "ZIP code from address if found",
+  "likely_vendor": "Current marketing agency if detectable from website footer/credits, or 'None Detected'",
+  "funnel_type": "Cold / Warm / Hot — based on marketing sophistication",
+  "priority_score": 7,
+  "ready_to_buy_score": 65,
+  "best_outreach_angle": "One sentence — the strongest reason they should talk to PDM right now",
+  "services_from_agency": "What marketing services they appear to already have (SEO, PPC, Social, etc.) or 'None visible'",
+  "service_gaps": "What PDM services they are clearly missing (comma separated)",
+  "best_poach_lever": "The #1 weakness to exploit in outreach — bad SEO, no video, weak social, outdated site, etc.",
+  "pdm_solution": "Specific PDM product(s) that close their biggest gap",
+  "est_marketing_maturity": 45,
+  "notes": "Any other notable intel — multi-location, recently rebranded, competitor mentions, etc."
+}
+
+Scoring guides:
+- priority_score: 1-10 (10 = immediate high-value target). Consider: practice size, implant focus, marketing gaps, market position.
+- ready_to_buy_score: 0-100 (100 = almost certainly needs help now). Consider: how outdated their marketing is, visible gaps, competitive pressure.
+- est_marketing_maturity: 0-100 (100 = fully mature marketing). Consider: website quality, SEO signals, social presence, content freshness.`;
+
+async function enrichPractices(practices: PracticeCandidate[]): Promise<EnrichedPractice[]> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    // No AI key — return unenriched
+    return practices.map(p => ({ ...p, source: p.source }));
+  }
+
+  const anthropic = new Anthropic({ apiKey });
+  const enriched: EnrichedPractice[] = [];
+
+  // Process in parallel batches of 3 to avoid rate limits
+  for (let i = 0; i < practices.length; i += 3) {
+    const batch = practices.slice(i, i + 3);
+    const results = await Promise.allSettled(
+      batch.map(async (practice) => {
+        if (!practice.website) {
+          return { ...practice, source: practice.source } as EnrichedPractice;
+        }
+
+        // Scrape the website
+        const markdown = await scrapePracticeWebsite(practice.website);
+        if (!markdown || markdown.length < 100) {
+          return { ...practice, source: practice.source } as EnrichedPractice;
+        }
+
+        // AI analysis
+        try {
+          const response = await anthropic.messages.create({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 1024,
+            messages: [{
+              role: 'user',
+              content: `Practice: ${practice.name}\nCity: ${practice.city || 'Unknown'}, ${practice.state || 'Unknown'}\nWebsite: ${practice.website}\n\n--- WEBSITE CONTENT ---\n${markdown}\n--- END ---\n\nExtract the intelligence JSON.`,
+            }],
+            system: ENRICHMENT_PROMPT,
+          });
+
+          const textBlock = response.content.find(b => b.type === 'text');
+          if (!textBlock || textBlock.type !== 'text') {
+            return { ...practice, source: practice.source } as EnrichedPractice;
+          }
+
+          // Parse JSON from response (handle markdown code blocks)
+          let jsonStr = textBlock.text.trim();
+          const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+          if (jsonMatch) jsonStr = jsonMatch[1].trim();
+
+          const parsed = JSON.parse(jsonStr);
+
+          return {
+            name: practice.name,
+            website: practice.website,
+            city: practice.city,
+            state: practice.state,
+            zip: parsed.zip || undefined,
+            phone: parsed.phone || practice.phone,
+            email: parsed.email || undefined,
+            doctor: parsed.doctor || undefined,
+            pointOfContact: parsed.point_of_contact || undefined,
+            pocRole: parsed.poc_role || undefined,
+            likelyVendor: parsed.likely_vendor || undefined,
+            funnelType: parsed.funnel_type || undefined,
+            priorityScore: parsed.priority_score || undefined,
+            readyToBuyScore: parsed.ready_to_buy_score || undefined,
+            bestOutreachAngle: parsed.best_outreach_angle || undefined,
+            servicesFromAgency: parsed.services_from_agency || undefined,
+            serviceGaps: parsed.service_gaps || undefined,
+            bestPoachLever: parsed.best_poach_lever || undefined,
+            pdmSolution: parsed.pdm_solution || undefined,
+            estMarketingMaturity: parsed.est_marketing_maturity || undefined,
+            notes: parsed.notes || undefined,
+            source: practice.source,
+            address: practice.address,
+          } as EnrichedPractice;
+        } catch {
+          return { ...practice, source: practice.source } as EnrichedPractice;
+        }
+      })
+    );
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        enriched.push(result.value);
+      } else {
+        // Shouldn't happen since we catch internally, but just in case
+        enriched.push({ ...batch[enriched.length % batch.length], source: 'firecrawl' });
+      }
+    }
+  }
+
+  return enriched;
+}
+
 // ─── Salesforce Dedup ────────────────────────────────────────────────────────
 // Only excludes ACTIVE client Accounts (operational Status__c values).
 // Cancelled/Inactive/Expired accounts and null-status TCI ticket buyers pass through.
@@ -501,7 +689,7 @@ async function dedup(
 // ─── Lead Creation ───────────────────────────────────────────────────────────
 
 async function createLeads(
-  practices: PracticeCandidate[],
+  practices: EnrichedPractice[],
   defaultCity?: string,
   defaultState?: string,
 ): Promise<{ created: CreatedLead[]; errors: string[] }> {
@@ -520,26 +708,41 @@ async function createLeads(
         .replace(/^\.|\.$/, '')
         .slice(0, 50);
 
+      // Build description with enrichment intel
+      const descParts = [
+        `Auto-discovered by Prophet market scan on ${new Date().toISOString().slice(0, 10)}.`,
+        `Source: ${practice.source}.`,
+      ];
+      if (practice.address) descParts.push(`Address: ${practice.address}`);
+      if (practice.doctor) descParts.push(`Doctor: ${practice.doctor}`);
+      if (practice.serviceGaps) descParts.push(`Service Gaps: ${practice.serviceGaps}`);
+      if (practice.bestOutreachAngle) descParts.push(`Best Outreach: ${practice.bestOutreachAngle}`);
+      if (practice.bestPoachLever) descParts.push(`Poach Lever: ${practice.bestPoachLever}`);
+      if (practice.pdmSolution) descParts.push(`PDM Solution: ${practice.pdmSolution}`);
+      if (practice.likelyVendor && practice.likelyVendor !== 'None Detected') {
+        descParts.push(`Current Vendor: ${practice.likelyVendor}`);
+      }
+      if (practice.readyToBuyScore) descParts.push(`Ready to Buy: ${practice.readyToBuyScore}/100`);
+      if (practice.estMarketingMaturity) descParts.push(`Marketing Maturity: ${practice.estMarketingMaturity}/100`);
+
       const fields: Record<string, unknown> = {
         LastName:   practice.name,
         Company:    practice.name,
-        Email:      `scan.${slug}@progressivedental.com`,
+        Email:      practice.email || `scan.${slug}@progressivedental.com`,
         LeadSource: 'PDM Prophet Scan',
         OwnerId:    SERVICE_ACCOUNT_ID,
         Status:     'Open - Not Contacted',
-        Description:
-          `Auto-discovered by Prophet market scan on ${new Date().toISOString().slice(0, 10)}. ` +
-          `Source: ${practice.source}.` +
-          (practice.address ? ` Address: ${practice.address}` : ''),
+        Description: descParts.join('\n'),
       };
 
       if (city)             fields['City']      = city;
       if (state)            fields['StateCode']  = state;
+      if (practice.zip)     fields['PostalCode'] = practice.zip;
       if (practice.website) fields['Website']    = practice.website;
       if (practice.phone)   fields['Phone']      = practice.phone;
 
       const leadId = await salesforceService.createRecord('Lead', fields);
-      created.push({ id: leadId, name: practice.name, website: practice.website, city, state });
+      created.push({ id: leadId, name: practice.name, website: practice.website, city, state, enriched: practice });
     } catch (err) {
       errors.push(`${practice.name}: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -682,20 +885,30 @@ async function handleAutoLeadScan(rawArgs: unknown): Promise<string> {
     return lines.join('\n');
   }
 
+  // ── Enrich Practices (scrape + AI analysis) ─────────────────────────
+  lines.push('');
+  lines.push('### 🧠 Practice Intelligence');
+  lines.push('');
+
+  const enrichedPractices = await enrichPractices(newPractices);
+  const enrichedCount = enrichedPractices.filter(p => p.doctor || p.serviceGaps || p.readyToBuyScore).length;
+  lines.push(`**Enriched:** ${enrichedCount}/${enrichedPractices.length} practices analyzed via website scrape + AI`);
+
   // ── Create Leads ───────────────────────────────────────────────────────
   lines.push('');
   lines.push('### 🆕 New Leads Created');
   lines.push('');
-  lines.push('| # | Practice | Website | Lead ID |');
-  lines.push('|---|---|---|---|');
+  lines.push('| # | Practice | Doctor | Ready to Buy | Service Gaps | Lead ID |');
+  lines.push('|---|---|---|---|---|---|');
 
-  const { created, errors } = await createLeads(newPractices, city, state);
+  const { created, errors } = await createLeads(enrichedPractices, city, state);
 
   created.forEach((lead, i) => {
-    const site = lead.website
-      ? `[${extractDomain(lead.website)}](${lead.website})`
-      : '—';
-    lines.push(`| ${i + 1} | ${lead.name} | ${site} | \`${lead.id}\` |`);
+    const e = lead.enriched;
+    const doctor = e?.doctor || '—';
+    const rtb = e?.readyToBuyScore ? `${e.readyToBuyScore}/100` : '—';
+    const gaps = e?.serviceGaps || '—';
+    lines.push(`| ${i + 1} | ${lead.name} | ${doctor} | ${rtb} | ${gaps} | \`${lead.id}\` |`);
   });
 
   if (errors.length > 0) {
@@ -748,6 +961,46 @@ async function handleAutoLeadScan(rawArgs: unknown): Promise<string> {
   const allLeadIds   = [...created.map(l => l.id), ...revivedLeads.map(l => l.id)];
   const allLeadNames = [...created.map(l => l.name), ...revivedLeads.map(l => l.name)];
 
+  // Build enrichment data for each lead (for Google Sheet consumption)
+  const leadDetails = created.map(l => ({
+    id: l.id,
+    name: l.name,
+    type: 'New',
+    website: l.website || '',
+    city: l.city || '',
+    state: l.state || '',
+    zip: l.enriched?.zip || '',
+    doctor: l.enriched?.doctor || '',
+    point_of_contact: l.enriched?.pointOfContact || '',
+    poc_role: l.enriched?.pocRole || '',
+    phone: l.enriched?.phone || '',
+    email: l.enriched?.email || '',
+    likely_vendor: l.enriched?.likelyVendor || '',
+    funnel_type: l.enriched?.funnelType || '',
+    priority_score: l.enriched?.priorityScore || '',
+    ready_to_buy_score: l.enriched?.readyToBuyScore || '',
+    best_outreach_angle: l.enriched?.bestOutreachAngle || '',
+    services_from_agency: l.enriched?.servicesFromAgency || '',
+    service_gaps: l.enriched?.serviceGaps || '',
+    best_poach_lever: l.enriched?.bestPoachLever || '',
+    pdm_solution: l.enriched?.pdmSolution || '',
+    est_marketing_maturity: l.enriched?.estMarketingMaturity || '',
+    notes: l.enriched?.notes || '',
+  }));
+
+  const revivedDetails = revivedLeads.map(l => ({
+    id: l.id,
+    name: l.name,
+    type: 'Revived',
+    website: '', city: '', state: '', zip: '',
+    doctor: '', point_of_contact: '', poc_role: '',
+    phone: '', email: '', likely_vendor: '', funnel_type: '',
+    priority_score: '', ready_to_buy_score: '',
+    best_outreach_angle: '', services_from_agency: '',
+    service_gaps: '', best_poach_lever: '', pdm_solution: '',
+    est_marketing_maturity: '', notes: `Revived after ${l.daysSinceActivity ?? '?'} days inactive`,
+  }));
+
   lines.push(JSON.stringify({
     scan_type:        importedPractices ? 'import' : 'firecrawl',
     market,
@@ -760,6 +1013,7 @@ async function handleAutoLeadScan(rawArgs: unknown): Promise<string> {
     lead_names:       allLeadNames,
     revived_ids:      revivedLeads.map(l => l.id),
     revived_names:    revivedLeads.map(l => l.name),
+    lead_details:     [...leadDetails, ...revivedDetails],
     timestamp:        new Date().toISOString(),
   }, null, 2));
   lines.push('```');
