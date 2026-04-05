@@ -85,6 +85,10 @@ interface SFRecord {
   State?: string;
   BillingCity?: string;
   BillingState?: string;
+  Status__c?: string;
+  LastActivityDate?: string;
+  OwnerId?: string;
+  LeadSource?: string;
 }
 
 interface CreatedLead {
@@ -93,6 +97,14 @@ interface CreatedLead {
   website?: string;
   city?: string;
   state?: string;
+}
+
+interface RevivedLead {
+  id: string;
+  name: string;
+  previousOwner?: string;
+  previousSource?: string;
+  daysSinceActivity?: number;
 }
 
 // ─── Zod Schema ──────────────────────────────────────────────────────────────
@@ -305,6 +317,14 @@ async function crawlMarket(
 }
 
 // ─── Salesforce Dedup ────────────────────────────────────────────────────────
+// Only excludes ACTIVE client Accounts (operational Status__c values).
+// Cancelled/Inactive/Expired accounts and null-status TCI ticket buyers pass through.
+// Stale Leads (no activity in 45+ days) get re-assigned to Service Account instead of skipped.
+
+const ACTIVE_STATUSES = [
+  'Active', 'Renewal', 'Non Renewing', 'Reinstated', 'Delinquent', 'Paused', 'Pending',
+];
+const STALE_LEAD_DAYS = 45;
 
 async function dedup(
   practices: PracticeCandidate[],
@@ -312,9 +332,10 @@ async function dedup(
   newPractices: PracticeCandidate[];
   existingCount: number;
   existingNames: string[];
+  revivedLeads: RevivedLead[];
 }> {
   if (practices.length === 0) {
-    return { newPractices: [], existingCount: 0, existingNames: [] };
+    return { newPractices: [], existingCount: 0, existingNames: [], revivedLeads: [] };
   }
 
   // Build LIKE conditions — limit to first 40 to avoid huge queries
@@ -324,56 +345,156 @@ async function dedup(
     .filter(n => n.length > 2);
 
   if (fragments.length === 0) {
-    return { newPractices: practices, existingCount: 0, existingNames: [] };
+    return { newPractices: practices, existingCount: 0, existingNames: [], revivedLeads: [] };
   }
 
   const leadLike = fragments.map(n => `Company LIKE '%${n}%'`).join(' OR ');
   const acctLike = fragments.map(n => `Name LIKE '%${n}%'`).join(' OR ');
 
+  // Only exclude Accounts that are ACTIVE clients — allow Cancelled/Inactive/Expired/null through
+  const statusFilter = ACTIVE_STATUSES.map(s => `'${s}'`).join(',');
+
   const [existingLeads, existingAccounts] = await Promise.all([
     salesforceService.rawQuery<SFRecord>(
-      `SELECT Id, Company, Name, Website FROM Lead WHERE (${leadLike}) LIMIT 200`
+      `SELECT Id, Company, Name, Website, LastActivityDate, OwnerId, LeadSource ` +
+      `FROM Lead WHERE (${leadLike}) LIMIT 200`
     ).catch(() => [] as SFRecord[]),
     salesforceService.rawQuery<SFRecord>(
-      `SELECT Id, Name, Website FROM Account WHERE (${acctLike}) LIMIT 200`
+      `SELECT Id, Name, Website, Status__c FROM Account ` +
+      `WHERE (${acctLike}) AND Status__c IN (${statusFilter}) LIMIT 200`
     ).catch(() => [] as SFRecord[]),
   ]);
 
-  // Build known-name and known-domain sets
-  const knownNames = new Set<string>();
-  const knownDomains = new Set<string>();
+  // Build sets ONLY from active-client Accounts and fresh Leads
+  const activeAccountNames = new Set<string>();
+  const activeAccountDomains = new Set<string>();
   const existingNames: string[] = [];
 
-  for (const lead of existingLeads) {
-    if (lead.Company) { knownNames.add(normalize(lead.Company)); existingNames.push(lead.Company); }
-    if (lead.Name)    knownNames.add(normalize(lead.Name));
-    if (lead.Website) knownDomains.add(extractDomain(lead.Website));
-  }
+  // Active Accounts → always block (these are current clients)
   for (const acct of existingAccounts) {
-    knownNames.add(normalize(acct.Name!));
+    activeAccountNames.add(normalize(acct.Name!));
     existingNames.push(acct.Name!);
-    if (acct.Website) knownDomains.add(extractDomain(acct.Website));
+    if (acct.Website) activeAccountDomains.add(extractDomain(acct.Website));
   }
 
-  const newPractices = practices.filter(p => {
+  // Categorize Leads: fresh (block) vs. stale (revive)
+  const freshLeadNames = new Set<string>();
+  const freshLeadDomains = new Set<string>();
+  const staleLeadMap = new Map<string, SFRecord>(); // normalized name → Lead record
+
+  const now = Date.now();
+  for (const lead of existingLeads) {
+    const daysSince = lead.LastActivityDate
+      ? Math.floor((now - new Date(lead.LastActivityDate).getTime()) / 86_400_000)
+      : 999; // No activity ever = definitely stale
+
+    if (daysSince >= STALE_LEAD_DAYS) {
+      // Stale — mark for re-assignment
+      const normName = normalize(lead.Company || lead.Name || '');
+      if (normName) staleLeadMap.set(normName, lead);
+    } else {
+      // Fresh — block as duplicate
+      if (lead.Company) { freshLeadNames.add(normalize(lead.Company)); existingNames.push(lead.Company); }
+      if (lead.Name)    freshLeadNames.add(normalize(lead.Name));
+      if (lead.Website) freshLeadDomains.add(extractDomain(lead.Website));
+    }
+  }
+
+  // Filter practices and collect stale leads to revive
+  const newPractices: PracticeCandidate[] = [];
+  const revivedLeads: RevivedLead[] = [];
+  let blockedCount = 0;
+
+  for (const p of practices) {
     const norm = normalize(p.name);
     const domain = p.website ? extractDomain(p.website) : '';
 
-    // Name overlap check (substring match both directions)
-    for (const known of knownNames) {
-      if (known.length >= 5 && (norm.includes(known) || known.includes(norm))) return false;
+    // Check 1: Active Account match → block entirely (this is a current client)
+    let isActiveClient = false;
+    for (const known of activeAccountNames) {
+      if (known.length >= 5 && (norm.includes(known) || known.includes(norm))) {
+        isActiveClient = true;
+        break;
+      }
+    }
+    if (!isActiveClient && domain && activeAccountDomains.has(domain)) {
+      isActiveClient = true;
+    }
+    if (isActiveClient) {
+      blockedCount++;
+      continue;
     }
 
-    // Domain match
-    if (domain && knownDomains.has(domain)) return false;
+    // Check 2: Fresh Lead match → block (already being worked)
+    let isFreshLead = false;
+    for (const known of freshLeadNames) {
+      if (known.length >= 5 && (norm.includes(known) || known.includes(norm))) {
+        isFreshLead = true;
+        break;
+      }
+    }
+    if (!isFreshLead && domain && freshLeadDomains.has(domain)) {
+      isFreshLead = true;
+    }
+    if (isFreshLead) {
+      blockedCount++;
+      continue;
+    }
 
-    return true;
-  });
+    // Check 3: Stale Lead match → revive instead of creating new
+    let staleMatch: SFRecord | undefined;
+    for (const [staleName, record] of staleLeadMap) {
+      if (staleName.length >= 5 && (norm.includes(staleName) || staleName.includes(norm))) {
+        staleMatch = record;
+        break;
+      }
+    }
+
+    if (staleMatch) {
+      // Re-assign stale Lead to Service Account with Prophet source
+      try {
+        const daysSince = staleMatch.LastActivityDate
+          ? Math.floor((now - new Date(staleMatch.LastActivityDate).getTime()) / 86_400_000)
+          : 999;
+
+        await salesforceService.updateRecord('Lead', staleMatch.Id, {
+          OwnerId:    SERVICE_ACCOUNT_ID,
+          LeadSource: 'PDM Prophet Scan',
+          Status:     'Open - Not Contacted',
+          Description:
+            `Re-assigned by Prophet Auto Lead Scan on ${new Date().toISOString().slice(0, 10)}. ` +
+            `Previously owned by ${staleMatch.OwnerId || 'unknown'}. ` +
+            `No activity for ${daysSince} days. Re-entering pipeline for Kubaru round-robin.`,
+        });
+
+        revivedLeads.push({
+          id: staleMatch.Id,
+          name: staleMatch.Company || staleMatch.Name || p.name,
+          previousOwner: staleMatch.OwnerId,
+          previousSource: staleMatch.LeadSource,
+          daysSinceActivity: daysSince,
+        });
+
+        // Remove from staleLeadMap so we don't double-match
+        for (const [key, val] of staleLeadMap) {
+          if (val.Id === staleMatch.Id) { staleLeadMap.delete(key); break; }
+        }
+      } catch (err) {
+        // If update fails, treat as new practice
+        newPractices.push(p);
+      }
+      continue;
+    }
+
+    // No match at all → truly new practice
+    newPractices.push(p);
+  }
 
   return {
     newPractices,
-    existingCount: practices.length - newPractices.length,
+    existingCount: blockedCount,
     existingNames: [...new Set(existingNames)].slice(0, 20),
+    revivedLeads,
   };
 }
 
@@ -507,19 +628,57 @@ async function handleAutoLeadScan(rawArgs: unknown): Promise<string> {
   lines.push('');
   lines.push('### Salesforce Dedup');
 
-  const { newPractices, existingCount, existingNames } = await dedup(candidates);
+  const { newPractices, existingCount, existingNames, revivedLeads } = await dedup(candidates);
 
-  lines.push(`- **Already in Salesforce:** ${existingCount} practices skipped`);
+  lines.push(`- **Active clients skipped:** ${existingCount} (already in Salesforce with active Status)`);
   if (existingNames.length > 0 && existingNames.length <= 15) {
     lines.push(`  - ${existingNames.join(', ')}`);
   } else if (existingNames.length > 15) {
     lines.push(`  - ${existingNames.slice(0, 15).join(', ')} … and ${existingNames.length - 15} more`);
   }
+  lines.push(`- **Stale Leads revived:** ${revivedLeads.length} (re-assigned to Service Account)`);
   lines.push(`- **New practices:** ${newPractices.length} to create as Leads`);
 
-  if (newPractices.length === 0) {
+  // Show revived leads
+  if (revivedLeads.length > 0) {
     lines.push('');
-    lines.push('✅ All discovered practices already exist in Salesforce. No new Leads created.');
+    lines.push('### ♻️ Revived Stale Leads');
+    lines.push('');
+    lines.push('| # | Practice | Lead ID | Days Since Activity |');
+    lines.push('|---|---|---|---|');
+    revivedLeads.forEach((lead, i) => {
+      lines.push(`| ${i + 1} | ${lead.name} | \`${lead.id}\` | ${lead.daysSinceActivity ?? '∞'} |`);
+    });
+    lines.push('');
+    lines.push('These leads have been re-assigned to Service Account → Kubaru round-robin.');
+  }
+
+  if (newPractices.length === 0 && revivedLeads.length === 0) {
+    lines.push('');
+    lines.push('✅ All discovered practices already exist in Salesforce as active clients. No new Leads created.');
+    return lines.join('\n');
+  }
+
+  if (newPractices.length === 0) {
+    // Only revived leads, no new creates — still output the JSON summary
+    lines.push('');
+    lines.push('---');
+    lines.push('```json');
+    lines.push(JSON.stringify({
+      scan_type:        'firecrawl',
+      market:           city && state ? `${city}, ${state}` : 'Imported',
+      total_candidates: candidates.length,
+      existing_skipped: existingCount,
+      leads_created:    0,
+      leads_revived:    revivedLeads.length,
+      revived_ids:      revivedLeads.map(l => l.id),
+      revived_names:    revivedLeads.map(l => l.name),
+      lead_ids:         revivedLeads.map(l => l.id),
+      lead_names:       revivedLeads.map(l => l.name),
+      creation_errors:  0,
+      timestamp:        new Date().toISOString(),
+    }, null, 2));
+    lines.push('```');
     return lines.join('\n');
   }
 
@@ -586,15 +745,21 @@ async function handleAutoLeadScan(rawArgs: unknown): Promise<string> {
   lines.push('');
   lines.push('---');
   lines.push('```json');
+  const allLeadIds   = [...created.map(l => l.id), ...revivedLeads.map(l => l.id)];
+  const allLeadNames = [...created.map(l => l.name), ...revivedLeads.map(l => l.name)];
+
   lines.push(JSON.stringify({
     scan_type:        importedPractices ? 'import' : 'firecrawl',
     market,
     total_candidates: candidates.length,
     existing_skipped: existingCount,
     leads_created:    created.length,
+    leads_revived:    revivedLeads.length,
     creation_errors:  errors.length,
-    lead_ids:         created.map(l => l.id),
-    lead_names:       created.map(l => l.name),
+    lead_ids:         allLeadIds,
+    lead_names:       allLeadNames,
+    revived_ids:      revivedLeads.map(l => l.id),
+    revived_names:    revivedLeads.map(l => l.name),
     timestamp:        new Date().toISOString(),
   }, null, 2));
   lines.push('```');
