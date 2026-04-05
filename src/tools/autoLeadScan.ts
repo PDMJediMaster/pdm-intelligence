@@ -149,7 +149,7 @@ const PracticeInput = z.object({
 const AutoLeadScanArgs = z.object({
   city:        z.string().optional(),
   state:       z.string().optional(),
-  max_results: z.number().min(1).max(100).default(20),
+  max_results: z.number().min(1).max(100).default(50),
   practices:   z.array(PracticeInput).optional(),
   send_email:  z.boolean().default(true),
 });
@@ -299,6 +299,9 @@ async function crawlMarket(
     `dental implant dentist ${city} ${state}`,
     `full arch dental implants ${city} ${state}`,
     `All-on-4 dental ${city} ${state}`,
+    `oral surgeon dental implants ${city} ${state}`,
+    `cosmetic dentist implants ${city} ${state}`,
+    `full mouth reconstruction dentist ${city} ${state}`,
   ];
 
   const allResults: FirecrawlSearchResult[] = [];
@@ -306,7 +309,7 @@ async function crawlMarket(
 
   for (const query of queries) {
     try {
-      const results = await firecrawlSearch(query, Math.ceil(maxResults / 2));
+      const results = await firecrawlSearch(query, Math.ceil(maxResults / 3));
       for (const r of results) {
         const domain = extractDomain(r.url);
         if (!seenDomains.has(domain)) {
@@ -378,38 +381,50 @@ async function scrapePracticeWebsite(url: string): Promise<string> {
 
 // ─── AI Practice Enrichment ─────────────────────────────────────────────────
 
-const ENRICHMENT_PROMPT = `You are a dental marketing intelligence analyst for Progressive Dental Marketing (PDM).
-Analyze this dental practice's website content and extract structured intelligence for a sales outreach campaign.
+const ENRICHMENT_PROMPT = `You are a dental marketing intelligence analyst for Progressive Dental Marketing (PDM), the #1 dental implant marketing agency in the US.
 
-PDM sells: PPC/Google Ads, SEO, Social Media Marketing, Website Development, Video Production, Graphic Design, and TCI Mentorship (case acceptance training).
+Analyze this dental practice's website to determine if they are a HIGH-VALUE prospect worth pursuing.
 
-Extract the following fields. If data is not available from the website, make your best inference or write "Unknown".
+PDM sells: PPC/Google Ads, SEO, Social Media Marketing, Website Development, Video Production, Graphic Design, and TCI Mentorship (case acceptance training for full-arch/implant cases).
 
-Return ONLY valid JSON with these exact keys:
+PDM's ideal client profile:
+- Dental practice offering implants, full-arch, or All-on-4 procedures
+- Located in a metro or suburban market with sufficient 45+ population and household income to support implant case volume
+- Practice appears established (not brand new) with growth capacity
+- Currently underinvesting in digital marketing relative to their market opportunity
+- NOT a good fit: rural small-town practices, pediatric-only, orthodontic-only, or practices in low-income areas where implant demand is minimal
+
+MARKET VIABILITY: If this practice is in a small town or rural area with limited population density, or if the local market demographics suggest low implant demand (low income, young population, remote location requiring patients to travel 30+ miles), set market_viable to false and ready_to_buy_score below 40.
+
+Extract the following. If data unavailable, make your best inference or write "Unknown".
+
+Return ONLY valid JSON:
 {
   "doctor": "Primary doctor/dentist name (Dr. Last Name)",
-  "point_of_contact": "Best person to reach (doctor name or office manager if found)",
+  "point_of_contact": "Best person to reach (doctor or office manager)",
   "poc_role": "Doctor / Office Manager / Practice Administrator",
   "phone": "Main phone number",
   "email": "Contact email if found",
-  "zip": "ZIP code from address if found",
-  "likely_vendor": "Current marketing agency if detectable from website footer/credits, or 'None Detected'",
-  "funnel_type": "Cold / Warm / Hot — based on marketing sophistication",
+  "zip": "ZIP code from address",
+  "likely_vendor": "Current marketing agency if detectable from site footer/credits/meta, or 'None Detected'",
+  "funnel_type": "Cold / Warm / Hot",
   "priority_score": 7,
-  "ready_to_buy_score": 65,
-  "best_outreach_angle": "One sentence — the strongest reason they should talk to PDM right now",
-  "services_from_agency": "What marketing services they appear to already have (SEO, PPC, Social, etc.) or 'None visible'",
-  "service_gaps": "What PDM services they are clearly missing (comma separated)",
-  "best_poach_lever": "The #1 weakness to exploit in outreach — bad SEO, no video, weak social, outdated site, etc.",
+  "ready_to_buy_score": 75,
+  "best_outreach_angle": "One sentence — the strongest hook for why they need PDM right now",
+  "services_from_agency": "Marketing services they appear to have (SEO, PPC, Social, Video, etc.) or 'None visible'",
+  "service_gaps": "PDM services they are clearly missing (comma separated)",
+  "best_poach_lever": "The #1 competitive weakness to exploit — bad SEO, no video, weak social, outdated site, no implant-specific pages, etc.",
   "pdm_solution": "Specific PDM product(s) that close their biggest gap",
   "est_marketing_maturity": 45,
-  "notes": "Any other notable intel — multi-location, recently rebranded, competitor mentions, etc."
+  "market_viable": true,
+  "notes": "Notable intel — multi-location, recently rebranded, competitor agency detected, implant focus level, etc."
 }
 
-Scoring guides:
-- priority_score: 1-10 (10 = immediate high-value target). Consider: practice size, implant focus, marketing gaps, market position.
-- ready_to_buy_score: 0-100 (100 = almost certainly needs help now). Consider: how outdated their marketing is, visible gaps, competitive pressure.
-- est_marketing_maturity: 0-100 (100 = fully mature marketing). Consider: website quality, SEO signals, social presence, content freshness.`;
+Scoring — be rigorous and honest:
+- priority_score: 1-10 (10 = must-call today). Consider practice size, implant focus, marketing gaps, market opportunity.
+- ready_to_buy_score: 0-100. Score 70+ ONLY if they have clear marketing deficiencies that PDM can fix AND they're in a viable market. Score below 40 if they're in a weak market, already well-marketed, or not implant-focused.
+- est_marketing_maturity: 0-100 (100 = fully mature). Website quality, SEO, social presence, content freshness, video, reviews.
+- market_viable: false if small rural town, remote location, or market demographics don't support implant volume.`;
 
 async function enrichPractices(practices: PracticeCandidate[]): Promise<EnrichedPractice[]> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -460,7 +475,7 @@ async function enrichPractices(practices: PracticeCandidate[]): Promise<Enriched
 
           const parsed = JSON.parse(jsonStr);
 
-          return {
+          const enrichedResult: EnrichedPractice = {
             name: practice.name,
             website: practice.website,
             city: practice.city,
@@ -484,7 +499,15 @@ async function enrichPractices(practices: PracticeCandidate[]): Promise<Enriched
             notes: parsed.notes || undefined,
             source: practice.source,
             address: practice.address,
-          } as EnrichedPractice;
+          };
+
+          // Market viability gate — reject non-viable markets
+          if (parsed.market_viable === false) {
+            enrichedResult.notes = `[FILTERED: Non-viable market] ${enrichedResult.notes || ''}`;
+            enrichedResult.readyToBuyScore = Math.min(enrichedResult.readyToBuyScore || 0, 30);
+          }
+
+          return enrichedResult;
         } catch {
           return { ...practice, source: practice.source } as EnrichedPractice;
         }
@@ -735,11 +758,24 @@ async function createLeads(
         Description: descParts.join('\n'),
       };
 
-      if (city)             fields['City']      = city;
-      if (state)            fields['StateCode']  = state;
-      if (practice.zip)     fields['PostalCode'] = practice.zip;
-      if (practice.website) fields['Website']    = practice.website;
-      if (practice.phone)   fields['Phone']      = practice.phone;
+      if (city)             fields['City']       = city;
+      if (state)            fields['StateCode']   = state;
+      if (practice.zip)     fields['PostalCode']  = practice.zip;
+      if (practice.website) fields['Website']     = practice.website;
+      if (practice.phone)   fields['Phone']       = practice.phone;
+
+      // Write enrichment to custom Lead fields
+      if (practice.doctor)             fields['Doctor_Name__c']          = practice.doctor;
+      if (practice.pointOfContact)     fields['Point_of_Contact__c']    = practice.pointOfContact;
+      if (practice.pocRole)            fields['POC_Role__c']            = practice.pocRole;
+      if (practice.priorityScore)      fields['Priority_Score__c']      = practice.priorityScore;
+      if (practice.readyToBuyScore)    fields['Ready_to_Buy_Score__c']  = practice.readyToBuyScore;
+      if (practice.estMarketingMaturity) fields['Est_Marketing_Maturity__c'] = practice.estMarketingMaturity;
+      if (practice.likelyVendor)       fields['Likely_Vendor__c']       = practice.likelyVendor;
+      if (practice.serviceGaps)        fields['Service_Gaps__c']        = practice.serviceGaps;
+      if (practice.bestOutreachAngle)  fields['Best_Outreach_Angle__c'] = practice.bestOutreachAngle;
+      if (practice.bestPoachLever)     fields['Best_Poach_Lever__c']    = practice.bestPoachLever;
+      if (practice.pdmSolution)        fields['PDM_Solution__c']        = practice.pdmSolution;
 
       const leadId = await salesforceService.createRecord('Lead', fields);
       created.push({ id: leadId, name: practice.name, website: practice.website, city, state, enriched: practice });
@@ -890,18 +926,59 @@ async function handleAutoLeadScan(rawArgs: unknown): Promise<string> {
   lines.push('### 🧠 Practice Intelligence');
   lines.push('');
 
-  const enrichedPractices = await enrichPractices(newPractices);
-  const enrichedCount = enrichedPractices.filter(p => p.doctor || p.serviceGaps || p.readyToBuyScore).length;
-  lines.push(`**Enriched:** ${enrichedCount}/${enrichedPractices.length} practices analyzed via website scrape + AI`);
+  const allEnriched = await enrichPractices(newPractices);
+  const enrichedCount = allEnriched.filter(p => p.doctor || p.serviceGaps || p.readyToBuyScore).length;
+  lines.push(`**Enriched:** ${enrichedCount}/${allEnriched.length} practices analyzed via website scrape + AI`);
 
-  // ── Create Leads ───────────────────────────────────────────────────────
+  // ── Quality Filter: RTB >= 70 only ─────────────────────────────────────
+  const MIN_RTB = 70;
+  const qualifiedPractices = allEnriched.filter(p => (p.readyToBuyScore ?? 0) >= MIN_RTB);
+  const filteredOut = allEnriched.filter(p => (p.readyToBuyScore ?? 0) < MIN_RTB);
+
+  lines.push(`**Quality filter (RTB ≥ ${MIN_RTB}):** ${qualifiedPractices.length} qualified, ${filteredOut.length} below threshold`);
+
+  if (filteredOut.length > 0 && filteredOut.length <= 10) {
+    lines.push('');
+    lines.push('**Filtered out (below RTB threshold):**');
+    for (const p of filteredOut) {
+      lines.push(`- ${p.name} — RTB: ${p.readyToBuyScore ?? 'N/A'}${p.notes?.includes('Non-viable market') ? ' (non-viable market)' : ''}`);
+    }
+  }
+
+  if (qualifiedPractices.length === 0) {
+    lines.push('');
+    lines.push(`⚠️ No practices met the RTB ≥ ${MIN_RTB} quality threshold. All ${allEnriched.length} candidates scored below ${MIN_RTB}.`);
+    lines.push('');
+    lines.push('---');
+    lines.push('```json');
+    lines.push(JSON.stringify({
+      scan_type: importedPractices ? 'import' : 'firecrawl',
+      market,
+      total_candidates: candidates.length,
+      existing_skipped: existingCount,
+      leads_created: 0,
+      leads_revived: revivedLeads.length,
+      leads_filtered: filteredOut.length,
+      lead_ids: revivedLeads.map(l => l.id),
+      lead_names: revivedLeads.map(l => l.name),
+      revived_ids: revivedLeads.map(l => l.id),
+      revived_names: revivedLeads.map(l => l.name),
+      lead_details: [],
+      creation_errors: 0,
+      timestamp: new Date().toISOString(),
+    }, null, 2));
+    lines.push('```');
+    return lines.join('\n');
+  }
+
+  // ── Create Leads (qualified only) ──────────────────────────────────────
   lines.push('');
   lines.push('### 🆕 New Leads Created');
   lines.push('');
   lines.push('| # | Practice | Doctor | Ready to Buy | Service Gaps | Lead ID |');
   lines.push('|---|---|---|---|---|---|');
 
-  const { created, errors } = await createLeads(enrichedPractices, city, state);
+  const { created, errors } = await createLeads(qualifiedPractices, city, state);
 
   created.forEach((lead, i) => {
     const e = lead.enriched;
