@@ -89,7 +89,7 @@ async function getChurnAlerts(userId: string): Promise<ChurnAlert[]> {
       `Flagged_Status__c, Cancellation_or_Pause_Request_Date__c ` +
       `FROM Account ` +
       `WHERE OwnerId = '${userId}' ` +
-      `AND Status__c IN ('Active','Renewal','15','Non Renewing','24','Reinstated','26','Delinquent','119','Paused','120','Pending','25') ` +
+      `AND Status__c IN ('Active','Renewal','Non Renewing','Reinstated','Delinquent','Paused','Pending') ` +
       `AND Status__c != null ` +
       `AND (Health_Tier__c = 'Critical' OR Health_Tier__c = 'At Risk' ` +
       `OR Flagged_Status__c != null ` +
@@ -139,7 +139,7 @@ async function getStaleAccounts(userId: string): Promise<StaleAccount[]> {
       `SELECT Id, Name, LastActivityDate, Total_Monthly_Recurring_Amount__c ` +
       `FROM Account ` +
       `WHERE OwnerId = '${userId}' ` +
-      `AND Status__c IN ('Active','Renewal','15','Non Renewing','24','Reinstated','26','Delinquent','119','Paused','120','Pending','25') ` +
+      `AND Status__c IN ('Active','Renewal','Non Renewing','Reinstated','Delinquent','Paused','Pending') ` +
       `AND Status__c != null ` +
       `AND (LastActivityDate < ${thirtyDaysAgo} OR LastActivityDate = null) ` +
       `ORDER BY Total_Monthly_Recurring_Amount__c DESC NULLS LAST ` +
@@ -185,7 +185,7 @@ async function getUpcomingRenewals(userId: string): Promise<UpcomingRenewal[]> {
       `SELECT Id, Name, Contract_Renewal_Date__c, Total_Monthly_Recurring_Amount__c, Health_Tier__c ` +
       `FROM Account ` +
       `WHERE OwnerId = '${userId}' ` +
-      `AND Status__c IN ('Active','Renewal','15','Non Renewing','24','Reinstated','26','Delinquent','119','Paused','120','Pending','25') ` +
+      `AND Status__c IN ('Active','Renewal','Non Renewing','Reinstated','Delinquent','Paused','Pending') ` +
       `AND Status__c != null ` +
       `AND Contract_Renewal_Date__c >= ${today} ` +
       `AND Contract_Renewal_Date__c <= ${thirtyDays} ` +

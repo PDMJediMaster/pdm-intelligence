@@ -971,10 +971,11 @@ export function getTelegramWebhookHandler(): ((req: IncomingMessage, res: Server
 export async function sendProactiveMessage(
   chatId: number,
   message: string,
-  keyboard?: InlineKeyboard
+  keyboard?: InlineKeyboard,
+  options?: { alreadyHtml?: boolean }
 ): Promise<void> {
   const b = getBot();
-  const chunks = splitMessage(formatForTelegram(message));
+  const chunks = splitMessage(options?.alreadyHtml ? message : formatForTelegram(message));
 
   for (let i = 0; i < chunks.length; i++) {
     // Check if user said "Stop" before sending each chunk
@@ -1017,7 +1018,7 @@ export async function sendMorningBrief(user: ProphetUser): Promise<void> {
       });
     }
 
-    await sendProactiveMessage(user.telegramChatId, brief.message, keyboard);
+    await sendProactiveMessage(user.telegramChatId, brief.message, keyboard, { alreadyHtml: true });
   } catch (err) {
     process.stderr.write(`[Prophet Telegram] Morning brief failed for ${user.name}: ${err instanceof Error ? err.message : String(err)}\n`);
   }
@@ -1044,7 +1045,7 @@ export async function sendEventNudge(user: ProphetUser, eventName: string, event
       .row()
       .text('⏭️ Skip — I\'ll log later', 'action:dismiss');
 
-    await sendProactiveMessage(user.telegramChatId, message, keyboard);
+    await sendProactiveMessage(user.telegramChatId, message, keyboard, { alreadyHtml: true });
   } catch (err) {
     process.stderr.write(`[Prophet Telegram] Event nudge failed for ${user.name}: ${err instanceof Error ? err.message : String(err)}\n`);
   }
@@ -1085,7 +1086,7 @@ export async function sendOrphanedCallNudge(
       `<b>Quick fix:</b> Open each Task in Salesforce and set the "Related To" (WhatId) field to the correct Account.\n\n` +
       `<i>Need help? Reply "brief [account name]" and I'll pull the full picture.</i>`;
 
-    await sendProactiveMessage(user.telegramChatId, message);
+    await sendProactiveMessage(user.telegramChatId, message, undefined, { alreadyHtml: true });
   } catch (err) {
     process.stderr.write(`[Prophet Telegram] Orphaned call nudge failed for ${user.name}: ${err instanceof Error ? err.message : String(err)}\n`);
   }
