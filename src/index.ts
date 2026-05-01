@@ -31,6 +31,7 @@ import { opportunityLifecycleTools, opportunityLifecycleHandlers } from './tools
 import { reportBuilderTools, reportBuilderHandlers } from './tools/reportBuilder.js';
 import { schedulingTools, schedulingHandlers } from './tools/scheduling.js';
 import { autoLeadScanTools, autoLeadScanHandlers } from './tools/autoLeadScan.js';
+import { eventEngagementTools, eventEngagementHandlers } from './tools/eventEngagement.js';
 
 // Load .env with override — ensures all keys are set even if salesforce.ts loaded first
 const __filename = fileURLToPath(import.meta.url);
@@ -63,6 +64,7 @@ const ALL_TOOLS = [
   ...reportBuilderTools,
   ...schedulingTools,
   ...autoLeadScanTools,
+  ...eventEngagementTools,
 ];
 
 const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
@@ -84,6 +86,7 @@ const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
   ...reportBuilderHandlers,
   ...schedulingHandlers,
   ...autoLeadScanHandlers,
+  ...eventEngagementHandlers,
 };
 
 // ─── MCP Server Factory ───────────────────────────────────────────────────

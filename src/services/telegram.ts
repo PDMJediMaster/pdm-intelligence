@@ -52,6 +52,56 @@ const USER_REGISTRY_FILE = `${USER_REGISTRY_DIR}/telegram-users.json`;
 let registeredUsers: Map<number, ProphetUser> = new Map();
 let pendingActions: Map<number, PendingAction> = new Map();
 
+// ─── Event Mode State ────────────────────────────────────────────────────────
+// When a rep activates event mode via /event [name], all subsequent messages
+// are treated as engagement logs for that event until they type /event off.
+
+interface EventModeEntry {
+  eventId: string;
+  eventName: string;
+  setAt: Date;
+}
+
+const eventModeState = new Map<number, EventModeEntry>();
+
+// ─── Disambiguation State ────────────────────────────────────────────────────
+// When Contact search returns 2–3 possible matches, we hold the parsed data
+// and ask the rep to confirm with "1", "2", or "3".
+
+interface ParsedEngagementData {
+  person_name?: string;
+  company?: string;
+  city?: string;
+  state?: string;
+  engagement_level: string;
+  services_discussed: string[];
+  primary_interest?: string;
+  pain_points: string[];
+  buying_signal?: string;
+  urgency?: string;
+  next_step?: string;
+  follow_up_date?: string;
+  follow_up_channel?: string;
+  notes?: string;
+  conversation_summary?: string;
+  confidence: number;
+}
+
+interface PendingDisambiguation {
+  contacts: Array<{
+    id: string; name: string; title: string;
+    account: string; city: string; state: string; email: string;
+  }>;
+  parsedData: ParsedEngagementData;
+  eventId: string;
+  eventName: string;
+  originalMessage: string;
+  repUserId: string;
+  expiresAt: number;
+}
+
+const pendingDisambiguations = new Map<number, PendingDisambiguation>();
+
 // ─── Active Request Cancellation ────────────────────────────────────────────
 // When a user says "Stop", we set their cancelled flag to true.
 // All message-sending loops check this flag before sending each chunk.
@@ -715,6 +765,134 @@ export async function initTelegram(
       }
     }
 
+    // ── /event command — set or clear event mode ────────────────────────────
+    if (/^\/event(\s|$)/i.test(text)) {
+      const arg = text.replace(/^\/event\s*/i, '').trim();
+
+      if (!arg || arg.toLowerCase() === 'off' || arg.toLowerCase() === 'stop') {
+        const was = eventModeState.get(chatId);
+        eventModeState.delete(chatId);
+        pendingDisambiguations.delete(chatId);
+        await ctx.reply(
+          was
+            ? `✅ Event mode off. Stopped logging for <b>${was.eventName}</b>.`
+            : `Event mode is not active.`,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
+
+      if (arg.toLowerCase() === 'status') {
+        const active = eventModeState.get(chatId);
+        await ctx.reply(
+          active
+            ? `🎟️ Event mode: <b>${active.eventName}</b>\nActive since ${active.setAt.toLocaleTimeString()}.\nEvery message you send will be logged as an engagement.\n\nType <code>/event off</code> when done.`
+            : `No active event. Type <code>/event [event name]</code> to start.`,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
+
+      // Search for the event by name
+      await ctx.replyWithChatAction('typing');
+      const evtHandler = toolHandlers['sf_get_active_events'];
+      if (!evtHandler) {
+        await ctx.reply('Event lookup tool not available.');
+        return;
+      }
+
+      try {
+        const evtResult = await evtHandler({ query: arg, days_ahead: 365 });
+        const { events, found } = JSON.parse(evtResult) as {
+          found: number;
+          events: Array<{ id: string; name: string; created_date: string }>;
+        };
+
+        if (!found || !events.length) {
+          await ctx.reply(
+            `No event found matching "<b>${arg}</b>".\n\nCheck the name and try again, or list recent events with <code>/event status</code>.`,
+            { parse_mode: 'HTML' }
+          );
+          return;
+        }
+
+        if (found === 1) {
+          const evt = events[0];
+          eventModeState.set(chatId, { eventId: evt.id, eventName: evt.name, setAt: new Date() });
+          pendingDisambiguations.delete(chatId);
+          await ctx.reply(
+            `🎟️ <b>Event mode active: ${evt.name}</b>\n\n` +
+            `Every message you send will be treated as an engagement log.\n\n` +
+            `<i>Example: "Met Dr. Johnson from Phoenix Dental. Hot lead, interested in PPC and SEO. Follow up tomorrow."</i>\n\n` +
+            `Type <code>/event off</code> when you're done logging.`,
+            { parse_mode: 'HTML' }
+          );
+          return;
+        }
+
+        // Multiple event matches — show list
+        const lines = events.slice(0, 5).map((e, i) => `<b>${i + 1}.</b> ${e.name}`).join('\n');
+        await ctx.reply(
+          `Found ${found} events matching "<b>${arg}</b>". Be more specific:\n\n${lines}`,
+          { parse_mode: 'HTML' }
+        );
+      } catch (err) {
+        await ctx.reply(`Event lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
+    // ── /log command — one-off event log without full event mode ────────────
+    if (/^\/log\s+/i.test(text)) {
+      const logMessage = text.replace(/^\/log\s+/i, '').trim();
+      const activeEvent = eventModeState.get(chatId);
+
+      if (!activeEvent) {
+        await ctx.reply(
+          `No active event set. Use <code>/event [event name]</code> first, then log away.\n\n` +
+          `Or use: <code>/log [event name] | [your note]</code> to specify inline.`,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
+
+      const user2 = registeredUsers.get(chatId);
+      if (user2) {
+        handleEventLog(ctx, user2, logMessage, activeEvent.eventId, activeEvent.eventName, toolHandlers)
+          .catch(err => ctx.reply(`Log failed: ${err instanceof Error ? err.message : String(err)}`).catch(() => {}));
+      }
+      return;
+    }
+
+    // ── Disambiguation reply — numbered contact selection ───────────────────
+    const pendingDisamb = pendingDisambiguations.get(chatId);
+    if (pendingDisamb && pendingDisamb.expiresAt > Date.now()) {
+      if (text.trim() === '0') {
+        pendingDisambiguations.delete(chatId);
+        await ctx.reply('Cancelled. Send your message again when ready.');
+        return;
+      }
+
+      const num = parseInt(text.trim(), 10);
+      if (num >= 1 && num <= pendingDisamb.contacts.length) {
+        const contact = pendingDisamb.contacts[num - 1];
+        pendingDisambiguations.delete(chatId);
+
+        const user3 = registeredUsers.get(chatId);
+        if (user3) {
+          completeEventLog(
+            ctx, user3, contact,
+            pendingDisamb.parsedData,
+            pendingDisamb.eventId,
+            pendingDisamb.eventName,
+            pendingDisamb.originalMessage,
+            toolHandlers
+          ).catch(err => ctx.reply(`Log failed: ${err instanceof Error ? err.message : String(err)}`).catch(() => {}));
+        }
+        return;
+      }
+    }
+
     const user = registeredUsers.get(chatId);
     if (!user) {
       await ctx.reply(
@@ -783,10 +961,266 @@ export async function initTelegram(
   process.stderr.write(`[Prophet Telegram] Bot initialized with ${TOOL_ROUTES.length} command routes\n`);
 }
 
+// ─── Event Engagement NLP Extraction ─────────────────────────────────────────
+// Parses a rep's natural language Telegram message into structured engagement
+// data using Claude. Called when event mode is active.
+
+async function extractEngagementData(message: string): Promise<ParsedEngagementData> {
+  const Anthropic = (await import('@anthropic-ai/sdk')).default;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
+
+  const anthropic = new Anthropic({ apiKey });
+
+  const today = new Date().toISOString().split('T')[0];
+
+  const prompt = `You are an event engagement data extractor for Progressive Dental Marketing (PDM).
+Parse the sales rep's message from a live event and extract structured data.
+
+PDM services (use these exact names): PPC, SEO, Social Media, Video Production, Website Development, Graphic Design, Traditional Media, TCI Mentorship, TCI Events
+
+Engagement level rules:
+- "hot", "very interested", "ready to buy", "wants to start", "sign up" → Hot
+- "interested", "curious", "maybe", "could work" → Warm
+- "not sure", "just looking", "no budget" → Cold
+- "client", "already with PDM", "existing" → Existing Client
+
+Today's date: ${today}
+
+Rep's message: "${message}"
+
+Return JSON only — no explanation, no markdown fences:
+{
+  "person_name": "full name with title if given (e.g. Dr. Smith), or null",
+  "company": "practice or company name, or null",
+  "city": "city only, or null",
+  "state": "2-letter state code if mentioned, or null",
+  "engagement_level": "Hot|Warm|Cold|Existing Client",
+  "services_discussed": ["array of exact PDM service names mentioned"],
+  "primary_interest": "the single most important service, or null",
+  "pain_points": ["array of problems or pain points they described"],
+  "buying_signal": "specific signal phrase or null",
+  "urgency": "timeframe mentioned (e.g. 'Q3', 'next month') or null",
+  "next_step": "agreed next action (e.g. 'Send deck', 'Schedule call') or null",
+  "follow_up_date": "YYYY-MM-DD — resolve relative dates like 'tomorrow' to exact date, or null",
+  "follow_up_channel": "Phone|Email|Text|LinkedIn or null",
+  "notes": "any other context worth capturing, or null",
+  "conversation_summary": "1–2 sentence summary of the conversation",
+  "confidence": 0-99
+}`;
+
+  const result = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 512,
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const raw = result.content[0].type === 'text' ? result.content[0].text.trim() : '{}';
+  // Strip any accidental markdown fences
+  const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+
+  try {
+    return JSON.parse(clean) as ParsedEngagementData;
+  } catch {
+    return {
+      engagement_level: 'Warm',
+      services_discussed: [],
+      pain_points: [],
+      confidence: 20,
+      notes: message,
+      conversation_summary: message,
+    };
+  }
+}
+
+// ─── Event Log Flow ──────────────────────────────────────────────────────────
+// Full end-to-end: parse message → search contacts → disambiguate → log record.
+
+async function handleEventLog(
+  ctx: Context,
+  user: ProphetUser,
+  text: string,
+  eventId: string,
+  eventName: string,
+  contactHandlers: Record<string, (args: unknown) => Promise<string>>
+): Promise<void> {
+  const chatId = ctx.chat?.id ?? 0;
+
+  await ctx.replyWithChatAction('typing');
+  await ctx.reply(`🔍 Parsing your note...`, { parse_mode: 'HTML' });
+
+  // ── Extract engagement data from natural language ──────────────────────────
+  let parsed: ParsedEngagementData;
+  try {
+    parsed = await extractEngagementData(text);
+  } catch (err) {
+    await ctx.reply(`Couldn't parse your message: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+
+  if (!parsed.person_name) {
+    await ctx.reply(
+      `I couldn't find a person's name in your message. Try:\n\n` +
+      `<i>"Met Dr. Smith from Dallas Dental. Hot lead, interested in PPC. Follow up tomorrow."</i>`,
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  // ── Search for matching Contact ────────────────────────────────────────────
+  const searchHandler = contactHandlers['sf_search_event_contacts'];
+  if (!searchHandler) {
+    await ctx.reply('Contact search tool not available.');
+    return;
+  }
+
+  await ctx.replyWithChatAction('typing');
+
+  const searchResult = await searchHandler({
+    name:    parsed.person_name,
+    company: parsed.company ?? undefined,
+    city:    parsed.city ?? undefined,
+    state:   parsed.state ?? undefined,
+    limit:   5,
+  });
+
+  const { contacts, found } = JSON.parse(searchResult) as {
+    found: number;
+    contacts: Array<{ id: string; name: string; title: string; account: string; city: string; state: string; email: string }>;
+    message?: string;
+  };
+
+  // ── No match ───────────────────────────────────────────────────────────────
+  if (!found || !contacts.length) {
+    const nameStr    = parsed.person_name;
+    const detailStr  = [parsed.company, parsed.city].filter(Boolean).join(', ');
+    await ctx.reply(
+      `I couldn't find <b>${nameStr}</b>${detailStr ? ` (${detailStr})` : ''} in Salesforce.\n\n` +
+      `All event attendees should be Contacts — they may be under a different spelling or their ticket may not have been converted yet.\n\n` +
+      `Try: <code>search [last name]</code> to look them up directly.`,
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  // ── Single confident match — log immediately ───────────────────────────────
+  if (found === 1) {
+    await completeEventLog(ctx, user, contacts[0], parsed, eventId, eventName, text, contactHandlers);
+    return;
+  }
+
+  // ── Multiple matches — disambiguation ─────────────────────────────────────
+  // Store state and ask the rep to pick
+  pendingDisambiguations.set(chatId, {
+    contacts,
+    parsedData: parsed,
+    eventId,
+    eventName,
+    originalMessage: text,
+    repUserId: user.salesforceUserId,
+    expiresAt: Date.now() + 5 * 60 * 1000, // 5 min window
+  });
+
+  const contactLines = contacts.slice(0, 5).map((c, i) => {
+    const titleStr  = c.title ? ` (${c.title})` : '';
+    const acctStr   = c.account ? ` — ${c.account}` : '';
+    const locStr    = [c.city, c.state].filter(Boolean).join(', ');
+    const locSuffix = locStr ? ` | ${locStr}` : '';
+    return `<b>${i + 1}.</b> ${c.name}${titleStr}${acctStr}${locSuffix}`;
+  }).join('\n');
+
+  await ctx.reply(
+    `I found ${found} possible matches for <b>${parsed.person_name}</b>. Which one?\n\n` +
+    `${contactLines}\n\n` +
+    `Reply <b>1</b>–<b>${Math.min(found, 5)}</b> to confirm, or <b>0</b> to cancel.`,
+    { parse_mode: 'HTML' }
+  );
+}
+
+// ─── Complete Event Log (after Contact confirmed) ────────────────────────────
+
+async function completeEventLog(
+  ctx: Context,
+  user: ProphetUser,
+  contact: { id: string; name: string; title: string; account: string; city: string; state: string },
+  parsed: ParsedEngagementData,
+  eventId: string,
+  eventName: string,
+  originalMessage: string,
+  handlers: Record<string, (args: unknown) => Promise<string>>
+): Promise<void> {
+  await ctx.replyWithChatAction('typing');
+
+  const logHandler = handlers['sf_log_event_engagement'];
+  if (!logHandler) {
+    await ctx.reply('Event logging tool not available.');
+    return;
+  }
+
+  const result = await logHandler({
+    contact_id:           contact.id,
+    event_id:             eventId,
+    engagement_level:     parsed.engagement_level,
+    services_discussed:   parsed.services_discussed,
+    primary_interest:     parsed.primary_interest ?? undefined,
+    pain_points:          parsed.pain_points,
+    buying_signal:        parsed.buying_signal ?? undefined,
+    urgency:              parsed.urgency ?? undefined,
+    notes:                parsed.notes ?? undefined,
+    conversation_summary: parsed.conversation_summary ?? undefined,
+    original_message:     originalMessage,
+    next_step:            parsed.next_step ?? undefined,
+    follow_up_date:       parsed.follow_up_date ?? undefined,
+    follow_up_channel:    parsed.follow_up_channel ?? undefined,
+    confidence_score:     parsed.confidence,
+    source:               'Telegram',
+    create_task:          true,
+    logged_by_user_id:    user.salesforceUserId,
+  });
+
+  const parsed2 = JSON.parse(result) as {
+    success: boolean;
+    duplicate?: boolean;
+    confirmation_message?: string;
+    message?: string;
+    engagement_id?: string;
+  };
+
+  if (!parsed2.success) {
+    if (parsed2.duplicate) {
+      await ctx.reply(
+        `⚠️ Already logged: ${parsed2.message}`,
+        { parse_mode: 'HTML' }
+      );
+    } else {
+      await ctx.reply(`❌ ${parsed2.message ?? 'Unknown error logging engagement.'}`);
+    }
+    return;
+  }
+
+  // Send the confirmation — already HTML from the tool
+  const msg = parsed2.confirmation_message ?? `✅ Logged for ${eventName}.`;
+  await ctx.reply(msg, { parse_mode: 'HTML' });
+
+  process.stderr.write(`[Prophet Event] Logged engagement: ${contact.name} @ ${eventName} by ${user.name}\n`);
+}
+
 // ─── Handle Text Message Routing ─────────────────────────────────────────────
 
 async function handleTextMessage(ctx: Context, user: ProphetUser, text: string): Promise<void> {
   const chatId = ctx.chat?.id ?? 0;
+
+  // ── Event Mode: route to event log handler if active ─────────────────────
+  const eventMode = eventModeState.get(chatId);
+  if (eventMode) {
+    try {
+      await handleEventLog(ctx, user, text, eventMode.eventId, eventMode.eventName, toolHandlers);
+    } catch (err) {
+      await ctx.reply(`Event log failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
   const route = routeMessage(text, user);
 
   // Register this as an active request so "Stop" can cancel it
