@@ -15,6 +15,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { salesforceService } from './salesforce.js';
 import { morningBriefEngine } from './morningBrief.js';
 import { runAgent } from './aiAgent.js';
+import { buildAccountIntelCommentary, computeAESegment } from '../tools/eventEngagement.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -101,6 +102,24 @@ interface PendingDisambiguation {
 }
 
 const pendingDisambiguations = new Map<number, PendingDisambiguation>();
+
+// ─── Pending Opportunity Creation State ──────────────────────────────────────
+// After logging a Hot engagement with a service gap, Prophet asks "Should I
+// create an opportunity?" The rep replies YES or NO within 5 minutes.
+
+interface PendingOpportunityCreation {
+  engagementId: string;
+  contactId: string;
+  accountId: string;
+  eventId: string;
+  eventName: string;
+  services: string[];
+  repUserId: string;
+  contactName: string;
+  expiresAt: number;
+}
+
+const pendingOpportunityCreations = new Map<number, PendingOpportunityCreation>();
 
 // ─── Active Request Cancellation ────────────────────────────────────────────
 // When a user says "Stop", we set their cancelled flag to true.
@@ -579,6 +598,13 @@ export async function initTelegram(
       `- "Just left [account]. [details]" — Quick post-call note\n` +
       `- Send a voice message — I'll transcribe and route it\n` +
       `- Send a photo — I'll extract any notes or info\n\n` +
+      `<b>Event Intelligence:</b>\n` +
+      `/event [name] — Activate event logging mode\n` +
+      `/event off — Stop event logging\n` +
+      `/event status — Check active event\n` +
+      `/dashboard — Live event engagement dashboard\n` +
+      `/log [message] — Log a single engagement (event mode must be active)\n` +
+      `- "Met Dr. Smith from Dallas Dental. Hot, interested in TCI." — Full NLP log\n\n` +
       `<b>Coaching & Growth:</b>\n` +
       `- "Coaching" — AM performance brief\n\n` +
       `<b>Control:</b>\n` +
@@ -864,6 +890,72 @@ export async function initTelegram(
       return;
     }
 
+    // ── /dashboard command — live event summary ─────────────────────────────
+    if (/^\/dashboard$/i.test(text)) {
+      const activeEvent = eventModeState.get(chatId);
+      if (!activeEvent) {
+        await ctx.reply(
+          `No active event. Use <code>/event [name]</code> first, then /dashboard to see live stats.`,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
+      const dashHandler = toolHandlers['sf_get_event_engagement_summary'];
+      if (!dashHandler) {
+        await ctx.reply('Event summary tool not available.');
+        return;
+      }
+      await ctx.replyWithChatAction('typing');
+      try {
+        const result = await dashHandler({ event_id: activeEvent.eventId });
+        // handleGetEventEngagementSummary returns HTML directly
+        const chunks = splitMessage(result);
+        for (const chunk of chunks) {
+          await ctx.reply(chunk, { parse_mode: 'HTML' });
+        }
+      } catch (err) {
+        await ctx.reply(`Dashboard failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
+    // ── Opportunity creation YES/NO reply ────────────────────────────────────
+    const pendingOpp = pendingOpportunityCreations.get(chatId);
+    if (pendingOpp && pendingOpp.expiresAt > Date.now()) {
+      const answer = text.trim().toLowerCase();
+      if (answer === 'yes' || answer === 'y') {
+        pendingOpportunityCreations.delete(chatId);
+        await ctx.replyWithChatAction('typing');
+        const createOppHandler = toolHandlers['sf_create_event_opportunity'];
+        if (!createOppHandler) {
+          await ctx.reply('Opportunity creation tool not available.');
+          return;
+        }
+        try {
+          const result = await createOppHandler({
+            contact_id:          pendingOpp.contactId,
+            account_id:          pendingOpp.accountId,
+            event_engagement_id: pendingOpp.engagementId,
+            event_id:            pendingOpp.eventId,
+            event_name:          pendingOpp.eventName,
+            services:            pendingOpp.services,
+            rep_user_id:         pendingOpp.repUserId,
+          });
+          const oppResult = JSON.parse(result) as { success: boolean; message?: string };
+          await ctx.reply(oppResult.message ?? `✅ Opportunity created for ${pendingOpp.contactName}`, { parse_mode: 'HTML' });
+        } catch (err) {
+          await ctx.reply(`Failed to create opportunity: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        return;
+      } else if (answer === 'no' || answer === 'n') {
+        pendingOpportunityCreations.delete(chatId);
+        await ctx.reply('Got it — engagement is logged, no opportunity created.');
+        return;
+      }
+      // Not yes/no — fall through to normal routing and clear the pending
+      pendingOpportunityCreations.delete(chatId);
+    }
+
     // ── Disambiguation reply — numbered contact selection ───────────────────
     const pendingDisamb = pendingDisambiguations.get(chatId);
     if (pendingDisamb && pendingDisamb.expiresAt > Date.now()) {
@@ -1138,6 +1230,9 @@ async function handleEventLog(
 }
 
 // ─── Complete Event Log (after Contact confirmed) ────────────────────────────
+// The "magic moment" — logs the record, then surfaces account intelligence
+// the rep didn't know: existing client status, MRR, service gaps, upsell flags.
+// If a Hot engagement has a service gap, offers to create an Opportunity.
 
 async function completeEventLog(
   ctx: Context,
@@ -1149,6 +1244,7 @@ async function completeEventLog(
   originalMessage: string,
   handlers: Record<string, (args: unknown) => Promise<string>>
 ): Promise<void> {
+  const chatId = ctx.chat?.id ?? 0;
   await ctx.replyWithChatAction('typing');
 
   const logHandler = handlers['sf_log_event_engagement'];
@@ -1156,6 +1252,9 @@ async function completeEventLog(
     await ctx.reply('Event logging tool not available.');
     return;
   }
+
+  // Compute segment with proper event name before calling handler
+  const aeSegment = computeAESegment(eventName, parsed.engagement_level, parsed.services_discussed);
 
   const result = await logHandler({
     contact_id:           contact.id,
@@ -1176,31 +1275,94 @@ async function completeEventLog(
     source:               'Telegram',
     create_task:          true,
     logged_by_user_id:    user.salesforceUserId,
+    ae_segment:           aeSegment,
   });
 
-  const parsed2 = JSON.parse(result) as {
+  const logResponse = JSON.parse(result) as {
     success: boolean;
     duplicate?: boolean;
     confirmation_message?: string;
     message?: string;
     engagement_id?: string;
+    account_id?: string;
+    services_discussed?: string[];
+    ae_segment?: string;
+    account_intel?: {
+      status: string;
+      mrr: number;
+      services: string;
+      tciStatus: string;
+      tciEnrolled: boolean;
+      healthScore: number | null;
+      healthTier: string;
+      ownerName: string;
+      upsellFlag: string;
+      isActiveClient: boolean;
+    } | null;
   };
 
-  if (!parsed2.success) {
-    if (parsed2.duplicate) {
-      await ctx.reply(
-        `⚠️ Already logged: ${parsed2.message}`,
-        { parse_mode: 'HTML' }
-      );
+  if (!logResponse.success) {
+    if (logResponse.duplicate) {
+      await ctx.reply(`⚠️ Already logged: ${logResponse.message}`, { parse_mode: 'HTML' });
     } else {
-      await ctx.reply(`❌ ${parsed2.message ?? 'Unknown error logging engagement.'}`);
+      await ctx.reply(`❌ ${logResponse.message ?? 'Unknown error logging engagement.'}`);
     }
     return;
   }
 
-  // Send the confirmation — already HTML from the tool
-  const msg = parsed2.confirmation_message ?? `✅ Logged for ${eventName}.`;
-  await ctx.reply(msg, { parse_mode: 'HTML' });
+  // ── Build enriched confirmation message ────────────────────────────────────
+  const baseMsg = logResponse.confirmation_message ?? `✅ Logged for ${eventName}.`;
+  const parts: string[] = [baseMsg];
+
+  // AE segment label
+  if (logResponse.ae_segment) {
+    parts.push(`🏷️ Segment: <i>${logResponse.ae_segment}</i>`);
+  }
+
+  // Account intelligence "magic moment"
+  let shouldCreateOpp = false;
+  let oppReason = '';
+  if (logResponse.account_intel) {
+    const { lines, shouldSuggestOpportunity, opportunityReason } = buildAccountIntelCommentary(
+      logResponse.account_intel,
+      logResponse.services_discussed ?? parsed.services_discussed
+    );
+    if (lines.length > 0) {
+      parts.push('');
+      parts.push(...lines);
+    }
+    shouldCreateOpp = shouldSuggestOpportunity;
+    oppReason = opportunityReason;
+  }
+
+  await ctx.reply(parts.join('\n'), { parse_mode: 'HTML' });
+
+  // ── Opportunity suggestion for Hot leads with service gaps ─────────────────
+  if (
+    shouldCreateOpp &&
+    logResponse.engagement_id &&
+    logResponse.account_id &&
+    parsed.engagement_level === 'Hot'
+  ) {
+    pendingOpportunityCreations.set(chatId, {
+      engagementId: logResponse.engagement_id,
+      contactId:    contact.id,
+      accountId:    logResponse.account_id,
+      eventId,
+      eventName,
+      services:     logResponse.services_discussed ?? parsed.services_discussed,
+      repUserId:    user.salesforceUserId,
+      contactName:  contact.name,
+      expiresAt:    Date.now() + 5 * 60 * 1000, // 5-minute window
+    });
+
+    await ctx.reply(
+      `💰 <b>This qualifies for a new opportunity.</b>\n` +
+      `<i>${oppReason}</i>\n\n` +
+      `Should I create it now? Reply <b>YES</b> or <b>NO</b>.`,
+      { parse_mode: 'HTML' }
+    );
+  }
 
   process.stderr.write(`[Prophet Event] Logged engagement: ${contact.name} @ ${eventName} by ${user.name}\n`);
 }
