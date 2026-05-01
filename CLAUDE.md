@@ -5,8 +5,8 @@
 
 **Owner:** William Summers — Salesforce Admin & Systems Architect, Progressive Dental Marketing
 **Project Path:** `/Users/williamsummers/salesforce-retention-mcp`
-**Last Updated:** March 2026
-**Status:** Active build — 18 tools compiled | Workflows 5, 9, 10 live | Call_Intelligence__c built | Workflow 11 (CI Processing) next
+**Last Updated:** May 2026
+**Status:** Active build — 18 tools compiled | Workflows 5, 9, 10 live | Call_Intelligence__c built | Competitor_Snapshot__c built | Event_Engagement__c built | Workflow 11 (CI Processing) next
 
 ---
 
@@ -211,7 +211,8 @@ Each product line has its own Salesforce Pricebook:
 - `Sales_Order__c` — active service contracts
 - `TCI_Training_Progress__c` — TCI program tracking
 - `TCI_Events__c` — The Closing Institute events
-- `Call_Intelligence__c` — ✅ CREATED 3/21/2026 — Per-call AI analysis library. Every VideoCall processed by Workflow 11 gets a record here. Fields:
+
+- `Call_Intelligence__c` — ✅ BUILT — Per-call AI analysis library. Every VideoCall processed by Workflow 11 gets a record here. Fields (26 custom, confirmed from org 5/1/2026):
   - `VideoCall__c` — Lookup(Video Call) — links to the source call
   - `Account__c` — Lookup(Account) — links to the client account
   - `Call_Date__c` — Date/Time
@@ -238,6 +239,61 @@ Each product line has its own Salesforce Pricebook:
   - `Processed_Date__c` — Date/Time
   - `Processing_Error__c` — Long Text Area(500)
   - `Transcript_Char_Count__c` — Number(10,0)
+
+- `Competitor_Snapshot__c` — ✅ BUILT — Quarterly competitor intelligence snapshots per Account or Lead. One record per competitor per period. Drives sf_get_competitive_alerts and save plays. Fields (24 custom, confirmed from org 5/1/2026):
+  - `Account__c` — Lookup(Account)
+  - `Lead__c` — Lookup(Lead)
+  - `Competitor_Name__c` — Text(255), required
+  - `Competitor_Website__c` — URL(255)
+  - `Snapshot_Date__c` — Date — when this snapshot was taken
+  - `Previous_Snapshot_Date__c` — Date — date of prior snapshot for delta calc
+  - `Google_Review_Count__c` — Number(6,0) — current review count
+  - `Previous_Review_Count__c` — Number(6,0) — count at last snapshot
+  - `Review_Delta__c` — Formula(Number) — `IF(ISBLANK(Previous_Review_Count__c), 0, Google_Review_Count__c - Previous_Review_Count__c)` — reviews gained since last snapshot
+  - `Estimated_Monthly_Reviews__c` — Number(4,0) — velocity estimate
+  - `Google_Star_Rating__c` — Number(3,1) — e.g., 4.8
+  - `Maps_Pack_Position__c` — Number(2,0) — Maps Pack rank for primary keyword
+  - `Running_Google_Ads__c` — Checkbox
+  - `Running_Facebook_Ads__c` — Checkbox
+  - `Has_YouTube_Channel__c` — Checkbox
+  - `Social_Platforms__c` — Text(255) — comma-delimited active platforms
+  - `Primary_Services__c` — Text(255) — short label, e.g. "Implants, All-on-4"
+  - `Primary_Services_Marketed__c` — Long Text Area(500) — full breakdown
+  - `Competitive_Pressure_Score__c` — Number(3,0), 0–100 — composite pressure score
+  - `Is_Primary_Competitor__c` — Checkbox — flags the dominant competitor for this account
+  - `Alert_Triggered__c` — Checkbox — set true when delta exceeds threshold and alert was sent
+  - `Research_Notes__c` — Long Text Area(2000) — analyst notes
+  - `Scan_Analysis__c` — Rich Text Area(32768) — full AI-written competitive analysis
+  - `Record_Name__c` — Auto Number (system name field)
+
+- `Event_Engagement__c` — ✅ BUILT — Tracks individual engagement records from ANY PDM event — TCI conferences (Bootcamp, FAGC) or Progressive Dental corporate events. One record per person-interaction. Captures conversation intelligence, buying signals, and follow-up pipeline at the event level. Links to Account, Contact, TCI_Events__c, and Opportunity. Fields (27 custom, confirmed from org 5/1/2026):
+  - `Account__c` — Lookup(Account) — matched account if known
+  - `Contact__c` — Lookup(Contact) — matched contact if known
+  - `TCI_Events__c` — Lookup(TCI_Events__c) — the event this engagement belongs to
+  - `Opportunity__c` — Lookup(Opportunity) — linked deal if created
+  - `Interaction_Date_Time__c` — Date/Time — when the interaction occurred
+  - `Interaction_Type__c` — Picklist — e.g., Booth Visit / Breakout / Hallway / One-on-One
+  - `Source__c` — Picklist — how engagement was captured
+  - `Matched_By__c` — Picklist — how account/contact was matched (Email / Name / Company / Manual)
+  - `Duplicate_Check_Key__c` — Text(255), **Unique** — deduplication key; prevents double-logging the same person at the same event
+  - `Engagement_Level__c` — Picklist — Hot / Warm / Cold / Existing Client
+  - `Buying_Signal__c` — Picklist — signal detected during conversation
+  - `Urgency__c` — Picklist — timeframe indicated by the prospect
+  - `Primary_Interest__c` — Picklist — which PDM product/service they asked about
+  - `Services_Discussed__c` — Multi-Select Picklist — all PDM services that came up
+  - `Pain_Point__c` — Multi-Select Picklist — problems they described
+  - `Confidence_Score__c` — Number(2,0), 0–99 — rep's confidence this lead is real
+  - `Conversation_Summary__c` — Long Text Area(3000) — what was said
+  - `Original_Message__c` — Long Text Area(2000) — raw rep notes or inbound message
+  - `Notes__c` — Long Text Area(2000) — additional context
+  - `Follow_Up_Date__c` — Date — when to reach out
+  - `Follow_Up_Channel__c` — Picklist — how to follow up (Phone / Email / Text / LinkedIn)
+  - `Follow_Up_Status__c` — Picklist — Not Started / In Progress / Complete / No Response
+  - `Next_Step__c` — Picklist — agreed next action
+  - `Next_Step_Type__c` — Picklist — category of next step
+  - `Opportunity_Created__c` — Checkbox — true once a deal was opened from this engagement
+  - `Task_Created__c` — Checkbox — true once a follow-up task was created
+  - `Revenue_Influence__c` — Currency(18,0) — closed revenue attributed to this event interaction
 
 **Key Account Custom Fields:**
 - `Status__c` — Marketing Status (the core status field)
@@ -618,7 +674,6 @@ These fields are required before certain tools and workflows can function fully:
 | Priority_Level__c | Lead + Account | Picklist | Low / Moderate / High / Top Priority |
 | Research_Summary__c | Lead + Account | Long Text Area | Research snapshot from sf_research_prospect |
 | Primary_Gap_Type__c | Lead + Account | Picklist | Drives Gamma template selection |
-| Competitor_Snapshot__c | Related object | Custom Object | Stores quarterly competitor data per Lead/Account |
 | Competitive_Gap_Summary__c | Lead + Account | Long Text Area (32,000) | Structured gap analysis: all PDM products vs. competitor, written by sf_research_prospect and refreshed quarterly |
 | Estimated_Monthly_Gap_Value__c | Lead + Account | Currency | Sum of recurring PDM products that would close all identified gaps — upsell opportunity dollar value |
 | Renewal_Deck_URL__c | Account | URL | Renewal deck link written by n8n |
