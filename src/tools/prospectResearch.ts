@@ -24,7 +24,7 @@ import { statusLabel } from './healthReports.js';
 const WILLIAM_SUMMERS_USER_ID = '005PU000001eUQDYA2';
 
 const VALID_PRIORITY_LEVELS = ['Low', 'Moderate', 'High', 'Top Priority'] as const;
-const VALID_GAP_TYPES        = ['SEO', 'Reputation', 'Video', 'Authority', 'Maps'] as const;
+const VALID_GAP_TYPES        = ['SEO', 'Reputation', 'Video', 'Authority', 'Maps', 'PPC', 'Social', 'Website', 'Full-Arch Authority'] as const;
 
 type PriorityLevel = typeof VALID_PRIORITY_LEVELS[number];
 type GapType       = typeof VALID_GAP_TYPES[number];
@@ -71,11 +71,15 @@ interface SFAccount {
 
 // Gap-type → Gamma theme mapping (professional dental sales decks)
 const GAP_TYPE_THEME: Record<string, string> = {
-  SEO:        'consultant', // Clean blue/white, analytics feel
-  Reputation: 'serene',    // Calm blue, trust-building
-  Video:      'aurora',    // Modern, dynamic, gradient
-  Authority:  'marine',    // Navy, bold, professional authority
-  Maps:       'icebreaker', // Clean blue, local/approachable
+  SEO:                 'consultant',  // Clean blue/white, analytics feel
+  Reputation:          'serene',      // Calm blue, trust-building
+  Video:               'aurora',      // Modern, dynamic, gradient
+  Authority:           'marine',      // Navy, bold, professional authority
+  'Full-Arch Authority': 'marine',    // Same as Authority
+  Maps:                'icebreaker',  // Clean blue, local/approachable
+  PPC:                 'consultant',  // Data-driven, performance feel
+  Social:              'aurora',      // Modern, social-first vibe
+  Website:             'serene',      // Clean, digital-first
 };
 
 export const prospectResearchTools: Tool[] = [
@@ -169,46 +173,120 @@ export const prospectResearchTools: Tool[] = [
           type: 'string',
           description: 'One-paragraph summary of key findings, max 500 characters',
         },
-        primaryCompetitorName: {
+        // ── Competitive Gap (required) ──────────────────────────────────────
+        competitiveGapSummary: {
           type: 'string',
-          description: 'Name of the #1 competitor identified in the research',
+          description: 'Full structured gap analysis covering all PDM products vs. competitor — Phase 1, Phase 2, TCI. ' +
+            'Maps every gap to a specific PDM product with urgency rating. Required per PDM architecture.',
         },
-        primaryCompetitorWebsite: {
+        estimatedMonthlyGapValue: {
+          type: 'number',
+          description: 'Sum of recurring Phase 2 + TCI Mentorship gaps in $/month (not one-time Phase 1)',
+        },
+        estimatedOneTimeGapValue: {
+          type: 'number',
+          description: 'Sum of one-time Phase 1 gaps ($)',
+        },
+        // ── Practice Profile ────────────────────────────────────────────────
+        doctorName: { type: 'string', description: 'Doctor name(s) at the practice' },
+        doctorBio: { type: 'string', description: 'Doctor background, training, credentials narrative' },
+        doctorCredentials: { type: 'string', description: 'Degrees, certifications, implant training programs' },
+        doctorInterests: { type: 'string', description: 'Personal interests for event targeting (e.g. "Cowboys fan, golfer, equestrian")' },
+        doctorAuthorityLevel: {
           type: 'string',
-          description: 'Website URL of the primary competitor',
+          enum: ['Speaker / Published', 'Local Presence', 'Online Presence Only', 'None Detected'],
+          description: 'How prominent is the doctor\'s online/professional authority?',
         },
-        competitorReviewCount: {
-          type: 'number',
-          description: 'Current Google review count for the primary competitor',
-        },
-        competitorStarRating: {
-          type: 'number',
-          description: 'Current Google star rating for the primary competitor (e.g. 4.7)',
-        },
-        competitorRunningAds: {
-          type: 'boolean',
-          description: 'Is the primary competitor running Google Ads?',
-        },
-        competitorRunningFacebookAds: {
-          type: 'boolean',
-          description: 'Is the primary competitor running Facebook/Meta ads?',
-        },
-        competitorMapsPosition: {
-          type: 'number',
-          description: 'Primary competitor Google Maps pack position (1-3 = in pack, 0 = not in pack)',
-        },
-        competitorPressureScore: {
-          type: 'number',
-          description: 'Competitive pressure score 0-100 for the primary competitor',
-        },
-        competitorPrimaryServices: {
+        yearsInPractice: { type: 'number', description: 'Approximate years the practice has been operating' },
+        practiceSize: {
           type: 'string',
-          description: 'Key services/procedures the competitor markets (e.g. "All-on-4, Full-Arch, Implants")',
+          enum: ['Solo', 'Small Group (2-4 Doctors)', 'Large Group (5+ Doctors)', 'DSO', 'Unknown'],
         },
-        competitorNotes: {
+        practiceOverview: { type: 'string', description: 'Short narrative about the practice — feel, positioning, differentiators' },
+        technologyStack: { type: 'string', description: 'Technology mentioned: CBCT, digital scanning, CEREC, Yomi, etc.' },
+        financingOptions: { type: 'string', description: 'Financing partners mentioned: CareCredit, Sunbit, etc.' },
+        languagesSpoken: { type: 'string', description: 'Languages served beyond English' },
+        // ── Specialization Detection ────────────────────────────────────────
+        primarySpecialization: { type: 'string', description: 'Single most prominent specialization detected' },
+        detectedSpecializations: {
           type: 'string',
-          description: 'Qualitative notes on the competitor — what makes them a threat',
+          description: 'Semicolon-delimited list of detected specializations matching picklist values ' +
+            '(e.g. "Full-Arch Implants;All-on-4;Night Guards"). Use exact picklist labels.',
         },
+        specializationSignals: {
+          type: 'string',
+          description: 'Raw keyword frequency data from FireCrawl scrape — ' +
+            'e.g. "night guard: 22 mentions, TMJ: 18 mentions, implant: 47 mentions"',
+        },
+        fullArchFocus: { type: 'boolean', description: 'Does full-arch / All-on-4 dominate the practice marketing?' },
+        implantCaseVolume: {
+          type: 'string',
+          enum: ['Very High (20+ cases/mo)', 'High (10-20 cases/mo)', 'Moderate (3-9 cases/mo)', 'Low (1-2 cases/mo)', 'Unknown'],
+        },
+        // ── Digital Presence ────────────────────────────────────────────────
+        websiteScore: { type: 'number', description: 'Website quality score 0-100' },
+        websiteLastUpdated: {
+          type: 'string',
+          enum: ['Recent (Within 1 Year)', 'Dated (1-3 Years)', 'Very Dated (3+ Years)', 'Unknown'],
+        },
+        mobileOptimized: { type: 'boolean' },
+        googleReviewCount: { type: 'number', description: 'Practice\'s own Google review count' },
+        googleStarRating: { type: 'number', description: 'Practice\'s Google star rating (e.g. 4.8)' },
+        reviewVelocity: { type: 'number', description: 'Estimated new reviews per month for the practice' },
+        mapsPakPosition: { type: 'number', description: 'Practice\'s own Maps pack position (1-3 = in pack)' },
+        runningGoogleAds: { type: 'boolean', description: 'Is the practice running Google Ads?' },
+        runningFacebookAds: { type: 'boolean', description: 'Is the practice running Facebook/Meta ads?' },
+        hasYouTubeChannel: { type: 'boolean' },
+        socialPlatforms: { type: 'string', description: 'Active social platforms comma-delimited' },
+        hasPatientVideos: { type: 'boolean' },
+        hasBeforeAfterGallery: { type: 'boolean' },
+        // ── Market Data ─────────────────────────────────────────────────────
+        marketSnapshot: { type: 'string', description: 'Narrative market snapshot for the 10-20 mile radius' },
+        population45PlusEstimate: { type: 'number', description: 'Estimated 45+ population within 10-20 mile radius' },
+        medianHouseholdIncome: { type: 'number', description: 'Median household income in dollars' },
+        topZipCodes: { type: 'string', description: 'Top affluent ZIP codes nearby, comma-delimited' },
+        retirementCommunitiesNearby: { type: 'boolean' },
+        marketTier: {
+          type: 'string',
+          enum: ['Tier 1 - Major Metro', 'Tier 2 - Large City', 'Tier 3 - Mid-Size Market', 'Tier 4 - Affluent Suburb', 'Tier 5 - Secondary / Rural'],
+        },
+        // ── Intelligence Sections ───────────────────────────────────────────
+        competitiveLandscape: { type: 'string', description: 'Narrative competitive landscape from Section 5 of the research' },
+        patientPsychology: { type: 'string', description: 'Patient psychology analysis from Section 3' },
+        safetyHierarchyAssessment: { type: 'string', description: 'Safety hierarchy assessment from Section 14' },
+        seoGapAnalysis: { type: 'string', description: 'SEO gap analysis from Section 7' },
+        whatIfNothing: { type: 'string', description: '"What If You Do Nothing" 12-month erosion projection from Section 16' },
+        marketDominationStrategy: { type: 'string', description: 'Market domination strategy from Section 18' },
+        // ── Sales Intelligence ──────────────────────────────────────────────
+        keyTalkingPoints: { type: 'string', description: '7-10 concise, conversation-ready talking points' },
+        recommendedMessaging: { type: 'string', description: 'Recommended messaging approach for AE outreach' },
+        discoveryQuestions: { type: 'string', description: '5-8 discovery questions from Section 21H' },
+        likelyObjections: { type: 'string', description: 'Likely objections and responses from Section 21I' },
+        positioningStatement: { type: 'string', description: 'One-sentence market positioning statement' },
+        executiveSummary: { type: 'string', description: '2-3 sentence call-ready executive summary from Section 21A' },
+        // ── AE / Outreach ───────────────────────────────────────────────────
+        aeSegment: { type: 'string', description: 'Account Engagement segment label' },
+        eventTargetingTags: { type: 'string', description: 'Topics/interests for event personalization, comma-delimited' },
+        outreachAngle: {
+          type: 'string',
+          enum: ['Full-Arch Authority', 'SEO Gap', 'Reputation Gap', 'Video Gap', 'PPC Gap', 'Social Gap', 'Maps Visibility', 'Market Opportunity', 'Competitor Threat'],
+          description: 'Primary outreach angle for AE automation',
+        },
+        proceedFinanceDetected: { type: 'boolean', description: 'Did research detect Proceed Finance partner usage?' },
+        // ── Full Report ─────────────────────────────────────────────────────
+        fullReport: { type: 'string', description: 'Complete research report text — all 21 sections. Stored in Full_Report__c on Practice_Intelligence__c.' },
+        // ── Primary Competitor ──────────────────────────────────────────────
+        primaryCompetitorName: { type: 'string', description: 'Name of the #1 competitor identified in the research' },
+        primaryCompetitorWebsite: { type: 'string', description: 'Website URL of the primary competitor' },
+        competitorReviewCount: { type: 'number', description: 'Current Google review count for the primary competitor' },
+        competitorStarRating: { type: 'number', description: 'Current Google star rating for the primary competitor (e.g. 4.7)' },
+        competitorRunningAds: { type: 'boolean', description: 'Is the primary competitor running Google Ads?' },
+        competitorRunningFacebookAds: { type: 'boolean', description: 'Is the primary competitor running Facebook/Meta ads?' },
+        competitorMapsPosition: { type: 'number', description: 'Primary competitor Google Maps pack position (1-3 = in pack, 0 = not in pack)' },
+        competitorPressureScore: { type: 'number', description: 'Competitive pressure score 0-100 for the primary competitor' },
+        competitorPrimaryServices: { type: 'string', description: 'Key services/procedures the competitor markets (e.g. "All-on-4, Full-Arch, Implants")' },
+        competitorNotes: { type: 'string', description: 'Qualitative notes on the competitor — what makes them a threat' },
+        // ── Lead Creation Overrides ─────────────────────────────────────────
         leadSource: {
           type: 'string',
           description: 'Override LeadSource when creating a new Lead (default: "PDM Research Tool"). ' +
@@ -220,7 +298,7 @@ export const prospectResearchTools: Tool[] = [
             'Use "005PU000009AWCkYAO" (Service Account) for auto-gen leads routed to Kubaru round-robin.',
         },
       },
-      required: ['marketingMaturityScore', 'likelihoodToBuyScore', 'priorityLevel', 'primaryGapType', 'researchSummary'],
+      required: ['marketingMaturityScore', 'likelihoodToBuyScore', 'priorityLevel', 'primaryGapType', 'researchSummary', 'competitiveGapSummary'],
     },
   },
   {
@@ -273,6 +351,7 @@ const ProspectResearchArgs = z.object({
 });
 
 const SaveResearchScoresArgs = z.object({
+  // ── Core (required) ────────────────────────────────────────────────────────
   practiceName:               z.string().optional(),
   city:                       z.string().optional(),
   state:                      z.string().optional(),
@@ -284,10 +363,74 @@ const SaveResearchScoresArgs = z.object({
   priorityLevel:              z.enum(VALID_PRIORITY_LEVELS),
   primaryGapType:             z.enum(VALID_GAP_TYPES),
   researchSummary:            z.string().max(500),
-  // Lead creation overrides (for auto-scan pipeline)
+  // ── Competitive Gap (required) ─────────────────────────────────────────────
+  competitiveGapSummary:      z.string(),
+  estimatedMonthlyGapValue:   z.number().optional(),
+  estimatedOneTimeGapValue:   z.number().optional(),
+  // ── Practice Profile ───────────────────────────────────────────────────────
+  doctorName:                 z.string().optional(),
+  doctorBio:                  z.string().optional(),
+  doctorCredentials:          z.string().optional(),
+  doctorInterests:            z.string().optional(),
+  doctorAuthorityLevel:       z.string().optional(),
+  yearsInPractice:            z.number().optional(),
+  practiceSize:               z.string().optional(),
+  practiceOverview:           z.string().optional(),
+  technologyStack:            z.string().optional(),
+  financingOptions:           z.string().optional(),
+  languagesSpoken:            z.string().optional(),
+  // ── Specialization ─────────────────────────────────────────────────────────
+  primarySpecialization:      z.string().optional(),
+  detectedSpecializations:    z.string().optional(),
+  specializationSignals:      z.string().optional(),
+  fullArchFocus:              z.boolean().optional(),
+  implantCaseVolume:          z.string().optional(),
+  // ── Digital Presence ───────────────────────────────────────────────────────
+  websiteScore:               z.number().optional(),
+  websiteLastUpdated:         z.string().optional(),
+  mobileOptimized:            z.boolean().optional(),
+  googleReviewCount:          z.number().optional(),
+  googleStarRating:           z.number().optional(),
+  reviewVelocity:             z.number().optional(),
+  mapsPakPosition:            z.number().optional(),
+  runningGoogleAds:           z.boolean().optional(),
+  runningFacebookAds:         z.boolean().optional(),
+  hasYouTubeChannel:          z.boolean().optional(),
+  socialPlatforms:            z.string().optional(),
+  hasPatientVideos:           z.boolean().optional(),
+  hasBeforeAfterGallery:      z.boolean().optional(),
+  // ── Market Data ────────────────────────────────────────────────────────────
+  marketSnapshot:             z.string().optional(),
+  population45PlusEstimate:   z.number().optional(),
+  medianHouseholdIncome:      z.number().optional(),
+  topZipCodes:                z.string().optional(),
+  retirementCommunitiesNearby: z.boolean().optional(),
+  marketTier:                 z.string().optional(),
+  // ── Intelligence Sections ──────────────────────────────────────────────────
+  competitiveLandscape:       z.string().optional(),
+  patientPsychology:          z.string().optional(),
+  safetyHierarchyAssessment:  z.string().optional(),
+  seoGapAnalysis:             z.string().optional(),
+  whatIfNothing:              z.string().optional(),
+  marketDominationStrategy:   z.string().optional(),
+  // ── Sales Intelligence ─────────────────────────────────────────────────────
+  keyTalkingPoints:           z.string().optional(),
+  recommendedMessaging:       z.string().optional(),
+  discoveryQuestions:         z.string().optional(),
+  likelyObjections:           z.string().optional(),
+  positioningStatement:       z.string().optional(),
+  executiveSummary:           z.string().optional(),
+  // ── AE / Outreach ──────────────────────────────────────────────────────────
+  aeSegment:                  z.string().optional(),
+  eventTargetingTags:         z.string().optional(),
+  outreachAngle:              z.string().optional(),
+  proceedFinanceDetected:     z.boolean().optional(),
+  // ── Full Report ────────────────────────────────────────────────────────────
+  fullReport:                 z.string().optional(),
+  // ── Lead Creation Overrides ────────────────────────────────────────────────
   leadSource:                 z.string().optional(),
   ownerId:                    z.string().optional(),
-  // Competitor snapshot fields (optional)
+  // ── Primary Competitor ─────────────────────────────────────────────────────
   primaryCompetitorName:      z.string().optional(),
   primaryCompetitorWebsite:   z.string().optional(),
   competitorReviewCount:      z.number().optional(),
@@ -778,31 +921,29 @@ async function handleProspectResearch(rawArgs: unknown): Promise<string> {
 // ─── Tool 2 Handler: sf_save_research_scores ─────────────────────────────────
 
 async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
+  const args = SaveResearchScoresArgs.parse(rawArgs ?? {});
   const {
-    practiceName,
-    city,
-    state,
-    websiteUrl,
-    leadId,
-    accountId,
-    marketingMaturityScore,
-    likelihoodToBuyScore,
-    priorityLevel,
-    primaryGapType,
-    researchSummary,
-    primaryCompetitorName,
-    primaryCompetitorWebsite,
-    competitorReviewCount,
-    competitorStarRating,
-    competitorRunningAds,
-    competitorRunningFacebookAds,
-    competitorMapsPosition,
-    competitorPressureScore,
-    competitorPrimaryServices,
-    competitorNotes,
-    leadSource,
-    ownerId,
-  } = SaveResearchScoresArgs.parse(rawArgs ?? {});
+    practiceName, city, state, websiteUrl, leadId, accountId,
+    marketingMaturityScore, likelihoodToBuyScore, priorityLevel, primaryGapType, researchSummary,
+    competitiveGapSummary, estimatedMonthlyGapValue, estimatedOneTimeGapValue,
+    doctorName, doctorBio, doctorCredentials, doctorInterests, doctorAuthorityLevel,
+    yearsInPractice, practiceSize, practiceOverview, technologyStack, financingOptions, languagesSpoken,
+    primarySpecialization, detectedSpecializations, specializationSignals, fullArchFocus, implantCaseVolume,
+    websiteScore, websiteLastUpdated, mobileOptimized, googleReviewCount, googleStarRating,
+    reviewVelocity, mapsPakPosition, runningGoogleAds, runningFacebookAds, hasYouTubeChannel,
+    socialPlatforms, hasPatientVideos, hasBeforeAfterGallery,
+    marketSnapshot, population45PlusEstimate, medianHouseholdIncome, topZipCodes,
+    retirementCommunitiesNearby, marketTier,
+    competitiveLandscape, patientPsychology, safetyHierarchyAssessment, seoGapAnalysis,
+    whatIfNothing, marketDominationStrategy,
+    keyTalkingPoints, recommendedMessaging, discoveryQuestions, likelyObjections,
+    positioningStatement, executiveSummary,
+    aeSegment, eventTargetingTags, outreachAngle, proceedFinanceDetected, fullReport,
+    primaryCompetitorName, primaryCompetitorWebsite, competitorReviewCount, competitorStarRating,
+    competitorRunningAds, competitorRunningFacebookAds, competitorMapsPosition,
+    competitorPressureScore, competitorPrimaryServices, competitorNotes,
+    leadSource, ownerId,
+  } = args;
 
   const lines: string[] = [];
   const writeErrors: string[] = [];
@@ -811,13 +952,19 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
   let resolvedAccountId = accountId;
   let wasLeadCreated    = false;
 
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Fields written to Lead and Account (core scores + gap values)
   const scoreFields: Record<string, unknown> = {
-    Marketing_Maturity_Score__c: Math.round(marketingMaturityScore),
-    Likelihood_to_Buy_Score__c:  Math.round(likelihoodToBuyScore),
-    Priority_Level__c:           priorityLevel as PriorityLevel,
-    Primary_Gap_Type__c:         primaryGapType as GapType,
-    Research_Summary__c:         researchSummary.slice(0, 500),
+    Marketing_Maturity_Score__c:  Math.round(marketingMaturityScore),
+    Likelihood_to_Buy_Score__c:   Math.round(likelihoodToBuyScore),
+    Priority_Level__c:            priorityLevel as PriorityLevel,
+    Primary_Gap_Type__c:          primaryGapType as GapType,
+    Research_Summary__c:          researchSummary.slice(0, 500),
+    Competitive_Gap_Summary__c:   competitiveGapSummary,
   };
+  if (estimatedMonthlyGapValue != null) scoreFields['Estimated_Monthly_Gap_Value__c'] = estimatedMonthlyGapValue;
+  if (estimatedOneTimeGapValue != null) scoreFields['Estimated_One_Time_Gap_Value__c'] = estimatedOneTimeGapValue;
 
   // Auto-create Lead if no existing record
   if (!resolvedLeadId && !resolvedAccountId) {
@@ -830,10 +977,11 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
         Email:      `research.${nameForEmail}@progressivedental.com`,
         LeadSource: leadSource ?? 'PDM Research Tool',
         Status:     'Open - Not Contacted',
+        Lead_Type__c: 'Prospect',
       };
       if (ownerId) newLeadFields['OwnerId'] = ownerId;
       if (city)       newLeadFields['City']      = city;
-      if (state)      newLeadFields['StateCode'] = state;  // StateCode required when State/Country Picklists enabled
+      if (state)      newLeadFields['StateCode'] = state;
       if (websiteUrl) newLeadFields['Website']   = websiteUrl;
 
       resolvedLeadId = await salesforceService.createRecord('Lead', newLeadFields);
@@ -843,10 +991,16 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
     }
   }
 
-  // Write scores to Lead
+  // Write scores + gap summary to Lead (including research date flags)
   if (resolvedLeadId) {
     try {
-      await salesforceService.updateRecord('Lead', resolvedLeadId, scoreFields);
+      const leadUpdate: Record<string, unknown> = {
+        ...scoreFields,
+        Research_Triggered__c: true,
+        Research_Date__c:      today,
+      };
+      if (websiteUrl) leadUpdate['Website'] = websiteUrl;
+      await salesforceService.updateRecord('Lead', resolvedLeadId, leadUpdate);
     } catch (err) {
       writeErrors.push(`Lead update failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -866,6 +1020,110 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
     } catch (err) {
       writeErrors.push(`Account update failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  // ── Create Practice_Intelligence__c record ────────────────────────────────
+  let practiceIntelId: string | null = null;
+  try {
+    const piFields: Record<string, unknown> = {
+      Research_Date__c:             new Date().toISOString(),
+      Research_Source__c:           'FireCrawl + Claude AI',
+      Research_Version__c:          1,
+      // Scores
+      Marketing_Maturity_Score__c:  Math.round(marketingMaturityScore),
+      Likelihood_to_Buy_Score__c:   Math.round(likelihoodToBuyScore),
+      Priority_Level__c:            priorityLevel,
+      Primary_Gap_Type__c:          primaryGapType,
+      Competitive_Gap_Summary__c:   competitiveGapSummary,
+    };
+
+    // Relationships
+    if (resolvedLeadId)    piFields['Lead__c']    = resolvedLeadId;
+    if (resolvedAccountId) piFields['Account__c'] = resolvedAccountId;
+
+    // Scores / gaps
+    if (estimatedMonthlyGapValue != null) piFields['Estimated_Monthly_Gap_Value__c'] = estimatedMonthlyGapValue;
+    if (estimatedOneTimeGapValue != null) piFields['Estimated_One_Time_Gap_Value__c'] = estimatedOneTimeGapValue;
+
+    // Practice Profile
+    if (doctorName)           piFields['Doctor_Name__c']           = doctorName;
+    if (doctorBio)            piFields['Doctor_Bio__c']            = doctorBio.slice(0, 3000);
+    if (doctorCredentials)    piFields['Doctor_Credentials__c']    = doctorCredentials.slice(0, 255);
+    if (doctorInterests)      piFields['Doctor_Interests__c']      = doctorInterests.slice(0, 1000);
+    if (doctorAuthorityLevel) piFields['Doctor_Authority_Level__c'] = doctorAuthorityLevel;
+    if (yearsInPractice != null) piFields['Years_In_Practice__c'] = yearsInPractice;
+    if (practiceSize)         piFields['Practice_Size__c']         = practiceSize;
+    if (practiceOverview)     piFields['Practice_Overview__c']     = practiceOverview.slice(0, 3000);
+    if (technologyStack)      piFields['Technology_Stack__c']      = technologyStack.slice(0, 1000);
+    if (financingOptions)     piFields['Financing_Options__c']     = financingOptions.slice(0, 255);
+    if (languagesSpoken)      piFields['Languages_Spoken__c']      = languagesSpoken.slice(0, 255);
+
+    // Website
+    if (websiteUrl)           piFields['Website_URL__c']           = websiteUrl;
+
+    // Specialization
+    if (primarySpecialization)   piFields['Primary_Specialization__c']   = primarySpecialization.slice(0, 255);
+    if (detectedSpecializations) piFields['Detected_Specializations__c'] = detectedSpecializations;
+    if (specializationSignals)   piFields['Specialization_Signals__c']   = specializationSignals.slice(0, 5000);
+    if (fullArchFocus != null)   piFields['Full_Arch_Focus__c']          = fullArchFocus;
+    if (implantCaseVolume)       piFields['Implant_Case_Volume_Estimate__c'] = implantCaseVolume;
+
+    // Digital Presence
+    if (websiteScore != null)        piFields['Website_Score__c']          = Math.round(websiteScore);
+    if (websiteLastUpdated)          piFields['Website_Last_Updated__c']   = websiteLastUpdated;
+    if (mobileOptimized != null)     piFields['Mobile_Optimized__c']       = mobileOptimized;
+    if (googleReviewCount != null)   piFields['Google_Review_Count__c']    = googleReviewCount;
+    if (googleStarRating != null)    piFields['Google_Star_Rating__c']     = googleStarRating;
+    if (reviewVelocity != null)      piFields['Review_Velocity__c']        = reviewVelocity;
+    if (mapsPakPosition != null)     piFields['Maps_Pack_Position__c']     = mapsPakPosition;
+    if (runningGoogleAds != null)    piFields['Running_Google_Ads__c']     = runningGoogleAds;
+    if (runningFacebookAds != null)  piFields['Running_Facebook_Ads__c']   = runningFacebookAds;
+    if (hasYouTubeChannel != null)   piFields['Has_YouTube_Channel__c']    = hasYouTubeChannel;
+    if (socialPlatforms)             piFields['Social_Platforms__c']       = socialPlatforms.slice(0, 255);
+    if (hasPatientVideos != null)    piFields['Has_Patient_Videos__c']     = hasPatientVideos;
+    if (hasBeforeAfterGallery != null) piFields['Has_Before_After_Gallery__c'] = hasBeforeAfterGallery;
+
+    // Market Data
+    if (marketSnapshot)              piFields['Market_Snapshot__c']            = marketSnapshot.slice(0, 5000);
+    if (population45PlusEstimate != null) piFields['Population_45_Plus_Estimate__c'] = population45PlusEstimate;
+    if (medianHouseholdIncome != null)    piFields['Median_Household_Income__c']    = medianHouseholdIncome;
+    if (topZipCodes)                      piFields['Top_Zip_Codes__c']              = topZipCodes.slice(0, 1000);
+    if (retirementCommunitiesNearby != null) piFields['Retirement_Communities_Nearby__c'] = retirementCommunitiesNearby;
+    if (marketTier)                       piFields['Market_Tier__c']                = marketTier;
+
+    // Intelligence Sections
+    if (competitiveLandscape)       piFields['Competitive_Landscape__c']       = competitiveLandscape.slice(0, 5000);
+    if (primaryCompetitorName)      piFields['Primary_Competitor_Name__c']     = primaryCompetitorName.slice(0, 255);
+    if (primaryCompetitorWebsite)   piFields['Primary_Competitor_Website__c']  = primaryCompetitorWebsite;
+    if (patientPsychology)          piFields['Patient_Psychology__c']          = patientPsychology.slice(0, 5000);
+    if (safetyHierarchyAssessment)  piFields['Safety_Hierarchy_Assessment__c'] = safetyHierarchyAssessment.slice(0, 3000);
+    if (seoGapAnalysis)             piFields['SEO_Gap_Analysis__c']            = seoGapAnalysis.slice(0, 5000);
+    if (whatIfNothing)              piFields['What_If_Nothing__c']             = whatIfNothing.slice(0, 3000);
+    if (marketDominationStrategy)   piFields['Market_Domination_Strategy__c']  = marketDominationStrategy.slice(0, 5000);
+
+    // Competitive Pressure
+    if (competitorPressureScore != null) piFields['Competitive_Pressure_Score__c'] = Math.round(competitorPressureScore);
+
+    // Sales Intelligence
+    if (keyTalkingPoints)     piFields['Key_Talking_Points__c']    = keyTalkingPoints.slice(0, 5000);
+    if (recommendedMessaging) piFields['Recommended_Messaging__c'] = recommendedMessaging.slice(0, 3000);
+    if (discoveryQuestions)   piFields['Discovery_Questions__c']   = discoveryQuestions.slice(0, 3000);
+    if (likelyObjections)     piFields['Likely_Objections__c']     = likelyObjections.slice(0, 3000);
+    if (positioningStatement) piFields['Positioning_Statement__c'] = positioningStatement.slice(0, 2000);
+    if (executiveSummary)     piFields['Executive_Summary__c']     = executiveSummary.slice(0, 5000);
+
+    // AE / Outreach
+    if (aeSegment)                piFields['AE_Segment__c']                = aeSegment.slice(0, 255);
+    if (eventTargetingTags)       piFields['Event_Targeting_Tags__c']      = eventTargetingTags.slice(0, 1000);
+    if (outreachAngle)            piFields['Outreach_Angle__c']            = outreachAngle;
+    if (proceedFinanceDetected != null) piFields['Proceed_Finance_Detected__c'] = proceedFinanceDetected;
+
+    // Full Report
+    if (fullReport) piFields['Full_Report__c'] = fullReport.slice(0, 32768);
+
+    practiceIntelId = await salesforceService.createRecord('Practice_Intelligence__c', piFields);
+  } catch (err) {
+    writeErrors.push(`Practice_Intelligence__c create failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // ── Competitor Snapshot Write ─────────────────────────────────────────────
@@ -910,21 +1168,27 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
   lines.push(`**Salesforce Write-Back:**`);
 
   if (resolvedLeadId && !writeErrors.some(e => e.startsWith('Lead'))) {
-    lines.push(`- ✅ Lead \`${resolvedLeadId}\` ${wasLeadCreated ? 'created and scores written' : 'updated with new scores'}`);
+    lines.push(`- ✅ Lead \`${resolvedLeadId}\` ${wasLeadCreated ? 'created and scores written' : 'updated — scores + gap summary + Research_Date'}`);
   }
   if (resolvedAccountId && !writeErrors.some(e => e.startsWith('Account'))) {
     lines.push(`- ✅ Account \`${resolvedAccountId}\` updated`);
+  }
+  if (practiceIntelId) {
+    lines.push(`- ✅ Practice_Intelligence__c record created: \`${practiceIntelId}\` — full research intelligence persisted`);
   }
   if (snapshotId) {
     lines.push(`- ✅ Competitor snapshot created: **${primaryCompetitorName}** \`${snapshotId}\``);
   } else if (primaryCompetitorName && !writeErrors.some(e => e.startsWith('Competitor'))) {
     lines.push(`- ℹ️ No competitor snapshot created (no Salesforce record to link to)`);
   }
+  if (estimatedMonthlyGapValue != null) {
+    lines.push(`- 💰 Monthly gap opportunity: **$${estimatedMonthlyGapValue.toLocaleString()}/mo** written to Lead/Account`);
+  }
   writeErrors.forEach(e => lines.push(`- ❌ ${e}`));
 
   if (writeErrors.length === 0) {
     lines.push('');
-    lines.push(`✅ Research complete. Intelligence is now persisted in Salesforce.`);
+    lines.push(`✅ Research complete. Intelligence persisted to Lead, Practice_Intelligence__c, and Competitor_Snapshot__c.`);
   }
 
   // ── Gamma Deck Generation Instructions ────────────────────────────────────
@@ -987,16 +1251,16 @@ async function handleSaveResearchScores(rawArgs: unknown): Promise<string> {
   const themeId = GAP_TYPE_THEME[gap] ?? 'consultant';
   const practiceDisplayName = practiceName ?? 'This Practice';
   const locationStr = [city, state].filter(Boolean).join(', ');
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const todayFormatted = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
   const deckContent = [
     `# ${practiceDisplayName} — Market Opportunity Assessment`,
-    `**Prepared by Progressive Dental Marketing | ${today}**`,
+    `**Prepared by Progressive Dental Marketing | ${todayFormatted}**`,
     ``,
     `## Slide 1: Title`,
     `**${practiceDisplayName}**${locationStr ? ` | ${locationStr}` : ''}`,
     `Your Path to Becoming the Most Trusted Implant Provider in ${locationStr || 'Your Market'}`,
-    `Prepared by Progressive Dental Marketing | ${today}`,
+    `Prepared by Progressive Dental Marketing | ${todayFormatted}`,
     ``,
     `## Slide 2: Your Market Opportunity`,
     `[Fill in: estimated 45+ population within 10-30 miles from your research]`,
@@ -1144,6 +1408,37 @@ async function handleSaveDeckUrl(rawArgs: unknown): Promise<string> {
   const lines: string[] = [];
   const resolvedTitle = deckTitle ?? 'Prospect Research Deck';
 
+  // ── Write Deck_URL__c directly to Lead (triggers AE segmentation list) ────
+  if (leadId) {
+    try {
+      await salesforceService.updateRecord('Lead', leadId, {
+        Deck_URL__c:        gammaUrl,
+        Outreach_Date__c:   new Date().toISOString().slice(0, 10),
+        Outreach_Status__c: 'Not Started',
+      });
+    } catch (err) {
+      writeErrors.push(`Lead Deck_URL write failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // ── Update Practice_Intelligence__c with deck URL if one exists ───────────
+  if (leadId || accountId) {
+    try {
+      const piQuery = leadId
+        ? `SELECT Id FROM Practice_Intelligence__c WHERE Lead__c = '${leadId}' ORDER BY Research_Date__c DESC LIMIT 1`
+        : `SELECT Id FROM Practice_Intelligence__c WHERE Account__c = '${accountId}' ORDER BY Research_Date__c DESC LIMIT 1`;
+      const piResults = await salesforceService.rawQuery<{ Id: string }>(piQuery);
+      if (piResults.length > 0) {
+        await salesforceService.updateRecord('Practice_Intelligence__c', piResults[0].Id, {
+          Deck_URL__c:          gammaUrl,
+          Deck_Created_Date__c: new Date().toISOString(),
+        });
+      }
+    } catch {
+      // non-fatal — PI record update is best-effort
+    }
+  }
+
   // ── Create Gamma__c record ─────────────────────────────────────────────────
 
   let gammaRecordId: string | null = null;
@@ -1201,6 +1496,9 @@ async function handleSaveDeckUrl(rawArgs: unknown): Promise<string> {
   lines.push(`| Salesforce Record | **${leadId ? `Lead \`${leadId}\`` : `Account \`${accountId}\``}** |`);
   lines.push(``);
 
+  if (leadId && !writeErrors.some(e => e.startsWith('Lead Deck'))) {
+    lines.push(`- ✅ Lead \`${leadId}\` → Deck_URL__c written + Outreach_Status__c = Not Started (AE segmentation list will trigger)`);
+  }
   if (gammaRecordId) lines.push(`- ✅ Gamma__c record created: \`${gammaRecordId}\``);
   if (taskId)        lines.push(`- ✅ Rep task created: "Deck ready" notification logged in Salesforce`);
   writeErrors.forEach(e => lines.push(`- ❌ ${e}`));

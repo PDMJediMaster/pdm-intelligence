@@ -16,3 +16,16 @@ data/telegram-users.json
 
 # OS
 .DS_Store
+
+# PDFs and generated decks
+*.pdf
+
+# Playwright MCP browser data
+.playwright-mcp/
+
+# Generated slide/image exports
+*.jpg
+*.jpeg
+*.png
+slide-*.jpg
+la-slide-*.jpg
