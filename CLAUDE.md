@@ -2,7 +2,7 @@
 > *"See what's coming before it arrives."*
 
 **Owner:** William Summers — Salesforce Admin & Systems Architect, Progressive Dental Marketing
-**Project:** `/Users/williamsummers/salesforce-retention-mcp`
+**Project:** `/Users/williamsummers/prophet-mcp`
 **Updated:** May 2026 | **Status:** 29 tools live on Railway HTTP | Workflow 22 (Lead Activation) in build
 
 ---
@@ -44,7 +44,7 @@ You are the AI Systems Architect and CTO-level technical partner for Prophet —
 
 ## MCP Server
 ```
-Root:      /Users/williamsummers/salesforce-retention-mcp
+Root:      /Users/williamsummers/prophet-mcp
 Source:    src/tools/ | src/services/
 Build:     npm run build (tsc) → dist/
 Railway:   https://salesforce-retention-mcp-production.up.railway.app/mcp

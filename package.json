@@ -1,5 +1,5 @@
 {
-  "name": "salesforce-retention-mcp",
+  "name": "prophet-mcp",
   "version": "1.0.0",
   "description": "Prophet by PDM — AI intelligence platform connecting Claude to Salesforce. See what's coming before it arrives.",
   "type": "module",
