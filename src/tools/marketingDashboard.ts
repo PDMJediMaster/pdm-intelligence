@@ -9,9 +9,7 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { salesforceService } from '../services/salesforce.js';
-
-const PARDOT_BU_ID = '0UvHp000000CavpKAC';
-const PARDOT_API_BASE = 'https://pi.pardot.com/api/v5/objects';
+import { getPardotToken, PARDOT_BU_ID, PARDOT_V5_BASE as PARDOT_API_BASE } from '../services/pardotAuth.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -149,7 +147,7 @@ export async function handleMarketingDashboard(args: unknown): Promise<string> {
   };
 
   const conn = await salesforceService.getConn();
-  const accessToken = conn.accessToken!;
+  const accessToken = await getPardotToken();
   const since = new Date(Date.now() - days * 86_400_000).toISOString().split('T')[0];
 
   // ── 1. Try Pardot API v5 ──────────────────────────────────────────────────
