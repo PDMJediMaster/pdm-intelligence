@@ -144,13 +144,13 @@ async function fetchAllPages<T>(firstUrl: string): Promise<T[]> {
 
 async function fetchAllLists(): Promise<PardotList[]> {
   return fetchAllPages<PardotList>(
-    `${PARDOT_V5_BASE}/lists?fields=id,name,isDeleted,isDynamic,createdAt,updatedAt&pageSize=200`,
+    `${PARDOT_V5_BASE}/lists?fields=id,name,isDeleted,isDynamic,createdAt,updatedAt&limit=200`,
   );
 }
 
 async function fetchListMemberships(listId: number): Promise<PardotListMembership[]> {
   return fetchAllPages<PardotListMembership>(
-    `${PARDOT_V5_BASE}/list-memberships?fields=id,listId,prospectId,optedOut,createdAt,updatedAt&listId=${listId}&pageSize=200`,
+    `${PARDOT_V5_BASE}/list-memberships?fields=id,listId,prospectId,optedOut,createdAt,updatedAt&listId=${listId}&limit=200`,
   );
 }
 
@@ -164,7 +164,7 @@ async function fetchProspectDetails(
     const idParams = chunk.map(id => `id[]=${id}`).join('&');
     try {
       const page = await pardotV5Get<PardotPage<PardotProspect>>(
-        `prospects?fields=id,email,salesforceId&${idParams}&pageSize=${CHUNK}`,
+        `prospects?fields=id,email,salesforceId&${idParams}&limit=${CHUNK}`,
       );
       for (const p of page.values ?? []) map.set(p.id, p);
     } catch {

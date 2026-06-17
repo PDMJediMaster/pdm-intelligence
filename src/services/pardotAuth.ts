@@ -6,11 +6,9 @@
 // memory and refreshed automatically when it expires (~2 hours).
 //
 // Required env vars:
-//   SF_CLIENT_ID     — Connected App Consumer Key
-//   SF_CLIENT_SECRET — Connected App Consumer Secret
-//   SF_USERNAME      — Salesforce username
-//   SF_PASSWORD      — Salesforce password
-//   SF_SECURITY_TOKEN — Salesforce security token (appended to password)
+//   SF_CLIENT_ID     — External Client App Consumer Key
+//   SF_CLIENT_SECRET — External Client App Consumer Secret
+// No username/password needed — Client Credentials flow is server-to-server only.
 //
 // Usage:
 //   import { getPardotToken } from '../services/pardotAuth.js';
@@ -35,27 +33,22 @@ export async function getPardotToken(): Promise<string> {
 
   const clientId     = process.env.SF_CLIENT_ID;
   const clientSecret = process.env.SF_CLIENT_SECRET;
-  const username     = process.env.SF_USERNAME;
-  const password     = process.env.SF_PASSWORD;
-  const token        = process.env.SF_SECURITY_TOKEN ?? '';
-  const loginUrl     = process.env.SF_LOGIN_URL ?? 'https://login.salesforce.com';
+  // Client Credentials flow must hit the org's instance URL, not login.salesforce.com
+  const instanceUrl  = process.env.SF_INSTANCE_URL ?? 'https://progressivedental.my.salesforce.com';
 
-  if (!clientId || !clientSecret || !username || !password) {
+  if (!clientId || !clientSecret) {
     throw new Error(
-      'Missing OAuth credentials for Pardot. Set SF_CLIENT_ID, SF_CLIENT_SECRET, ' +
-      'SF_USERNAME, SF_PASSWORD, and SF_SECURITY_TOKEN in your environment.'
+      'Missing Pardot OAuth credentials. Set SF_CLIENT_ID and SF_CLIENT_SECRET in your environment.'
     );
   }
 
   const body = new URLSearchParams({
-    grant_type:    'password',
+    grant_type:    'client_credentials',
     client_id:     clientId,
     client_secret: clientSecret,
-    username,
-    password:      password + token,
   });
 
-  const resp = await fetch(`${loginUrl}/services/oauth2/token`, {
+  const resp = await fetch(`${instanceUrl}/services/oauth2/token`, {
     method:  'POST',
     body,
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

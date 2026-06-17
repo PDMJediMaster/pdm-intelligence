@@ -159,7 +159,7 @@ export async function handleMarketingDashboard(args: unknown): Promise<string> {
   try {
     const emailParams: Record<string, string> = {
       fields: 'id,name,subject,sentAt,status,stats',
-      pageSize: String(limit),
+      limit: String(limit),
       orderBy: 'sentAt',
       orderByDirection: 'DESC',
       createdAfter: since,
@@ -172,7 +172,7 @@ export async function handleMarketingDashboard(args: unknown): Promise<string> {
     // Form handlers
     const fhRes = await callPardotApi<PardotFormHandler>('form-handlers', accessToken, {
       fields: 'id,name,successfulSubmissions,erroredSubmissions,views,createdAt',
-      pageSize: '25',
+      limit: '25',
       orderBy: 'successfulSubmissions',
       orderByDirection: 'DESC',
     });
