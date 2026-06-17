@@ -266,10 +266,15 @@ async function handleAeListSync(rawArgs: unknown): Promise<string> {
   const { mode, list_id, list_name, dry_run } = AeListSyncArgs.parse(rawArgs ?? {});
 
   const conn  = await salesforceService.getConn();
-  const token = (conn as unknown as { accessToken: string }).accessToken;
+  const token = process.env.PARDOT_ACCESS_TOKEN;
 
   if (!token) {
-    return '❌ No Salesforce access token available. Check credentials.';
+    return (
+      '❌ PARDOT_ACCESS_TOKEN is not set.\n\n' +
+      'This env var must hold a valid Pardot API Bearer token.\n' +
+      'Get it by visiting Salesforce → Account Engagement → Settings → ' +
+      'copy the "API Access Key", then add it to Railway as PARDOT_ACCESS_TOKEN.'
+    );
   }
 
   const lines: string[] = [];
