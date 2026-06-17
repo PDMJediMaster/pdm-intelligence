@@ -33,6 +33,8 @@ import { schedulingTools, schedulingHandlers } from './tools/scheduling.js';
 import { autoLeadScanTools, autoLeadScanHandlers } from './tools/autoLeadScan.js';
 import { eventEngagementTools, eventEngagementHandlers } from './tools/eventEngagement.js';
 import { leadEnrichmentTools, leadEnrichmentHandlers } from './tools/leadEnrichment.js';
+import { salesFunnelTools, salesFunnelHandlers } from './tools/salesFunnel.js';
+import { marketingDashboardTools, marketingDashboardHandlers } from './tools/marketingDashboard.js';
 
 // Load .env with override — ensures all keys are set even if salesforce.ts loaded first
 const __filename = fileURLToPath(import.meta.url);
@@ -67,6 +69,8 @@ const ALL_TOOLS = [
   ...autoLeadScanTools,
   ...eventEngagementTools,
   ...leadEnrichmentTools,
+  ...salesFunnelTools,
+  ...marketingDashboardTools,
 ];
 
 const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
@@ -90,6 +94,8 @@ const ALL_HANDLERS: Record<string, (args: unknown) => Promise<string>> = {
   ...autoLeadScanHandlers,
   ...eventEngagementHandlers,
   ...leadEnrichmentHandlers,
+  ...salesFunnelHandlers,
+  ...marketingDashboardHandlers,
 };
 
 // ─── MCP Server Factory ───────────────────────────────────────────────────
