@@ -49,6 +49,15 @@ class SalesforceService {
       return this.conn!;
     }
 
+    // Prefer OAuth2 client credentials when available — avoids username/password login
+    if (process.env.SF_CLIENT_ID && process.env.SF_CLIENT_SECRET) {
+      this.connectingPromise = this.connectViaOAuth()
+        .then(conn => { this.conn = conn; this.connectingPromise = null; })
+        .catch(err => { this.connectingPromise = null; throw err; });
+      await this.connectingPromise;
+      return this.conn!;
+    }
+
     const loginUrl = process.env.SF_LOGIN_URL ?? 'https://login.salesforce.com';
     const username  = process.env.SF_USERNAME;
     const password  = process.env.SF_PASSWORD;
@@ -75,6 +84,31 @@ class SalesforceService {
 
     await this.connectingPromise;
     return this.conn!;
+  }
+
+  private async connectViaOAuth(): Promise<jsforce.Connection> {
+    const instanceUrl  = process.env.SF_INSTANCE_URL ?? 'https://progressivedental.my.salesforce.com';
+    const clientId     = process.env.SF_CLIENT_ID!;
+    const clientSecret = process.env.SF_CLIENT_SECRET!;
+
+    const body = new URLSearchParams({
+      grant_type:    'client_credentials',
+      client_id:     clientId,
+      client_secret: clientSecret,
+    });
+
+    const resp = await fetch(`${instanceUrl}/services/oauth2/token`, {
+      method:  'POST',
+      body,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+
+    const data = await resp.json() as { access_token?: string; error?: string; error_description?: string };
+    if (!data.access_token) {
+      throw new Error(`Salesforce OAuth failed: ${data.error} — ${data.error_description}`);
+    }
+
+    return new jsforce.Connection({ instanceUrl, accessToken: data.access_token, version: '61.0' });
   }
 
   /** Re-authenticate if the session expired and retry once */

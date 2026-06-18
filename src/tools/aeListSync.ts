@@ -21,7 +21,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { salesforceService } from '../services/salesforce.js';
-import { pardotV5Get, PARDOT_V5_BASE } from '../services/pardotAuth.js';
+import { pardotV5Get, getPardotToken, PARDOT_V5_BASE } from '../services/pardotAuth.js';
 
 // ─── Tool Definition ──────────────────────────────────────────────────────────
 
@@ -174,54 +174,76 @@ async function fetchProspectDetails(
   return map;
 }
 
-// ─── jsforce Upsert Helpers ───────────────────────────────────────────────────
+// ─── Salesforce Composite REST Upsert ────────────────────────────────────────
+// Uses the sObject Collections API (PATCH /composite/sobjects/{obj}/{extId})
+// which supports 200 records per call and works with OAuth access tokens.
 
-interface UpsertResult {
-  created: boolean;
+const SF_INSTANCE   = process.env.SF_INSTANCE_URL ?? 'https://progressivedental.my.salesforce.com';
+const SF_API_VERSION = 'v62.0';
+
+interface SFCollectionResult {
   id:      string;
   success: boolean;
-  errors?: Array<{ message: string; statusCode: string }>;
+  created: boolean;
+  errors:  Array<{ message: string; statusCode: string }>;
 }
 
-async function upsertListRecords(
-  conn: Awaited<ReturnType<typeof salesforceService.getConn>>,
-  records: AEListRecord[],
-): Promise<{ inserted: number; updated: number; errors: number }> {
-  if (!records.length) return { inserted: 0, updated: 0, errors: 0 };
-  const raw = await conn.sobject('AE_List__c')
-    .upsert(records as unknown as object[], 'AE_List_ID__c', {});
-  return countResults((Array.isArray(raw) ? raw : [raw]) as unknown as UpsertResult[]);
-}
-
-async function upsertMembershipRecords(
-  conn: Awaited<ReturnType<typeof salesforceService.getConn>>,
-  records: AEMembershipRecord[],
+async function sfUpsert<T extends object>(
+  objectName: string,
+  extIdField: string,
+  records: T[],
 ): Promise<{ inserted: number; updated: number; errors: number }> {
   if (!records.length) return { inserted: 0, updated: 0, errors: 0 };
 
-  const totals = { inserted: 0, updated: 0, errors: 0 };
-  const BATCH  = 200;
+  const token   = await getPardotToken(); // same OAuth token works for SF REST API
+  const totals  = { inserted: 0, updated: 0, errors: 0 };
+  const BATCH   = 200;
 
   for (let i = 0; i < records.length; i += BATCH) {
-    const raw2   = await conn.sobject('AE_List_Membership__c')
-      .upsert(records.slice(i, i + BATCH) as unknown as object[], 'Membership_Key__c', {});
-    const counts = countResults((Array.isArray(raw2) ? raw2 : [raw2]) as unknown as UpsertResult[]);
-    totals.inserted += counts.inserted;
-    totals.updated  += counts.updated;
-    totals.errors   += counts.errors;
+    const batch = records.slice(i, i + BATCH).map(r => ({
+      attributes: { type: objectName },
+      ...r,
+    }));
+
+    const resp = await fetch(
+      `${SF_INSTANCE}/services/data/${SF_API_VERSION}/composite/sobjects/${objectName}/${extIdField}`,
+      {
+        method:  'PATCH',
+        headers: {
+          Authorization:  `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ allOrNone: false, records: batch }),
+      },
+    );
+
+    const results = await resp.json() as SFCollectionResult[];
+    for (const r of results) {
+      if (!r.success) errors(r, totals);
+      else if (r.created) totals.inserted++;
+      else totals.updated++;
+    }
   }
 
   return totals;
 }
 
-function countResults(results: UpsertResult[]): { inserted: number; updated: number; errors: number } {
-  let inserted = 0, updated = 0, errors = 0;
-  for (const r of results) {
-    if (!r.success) errors++;
-    else if (r.created) inserted++;
-    else updated++;
-  }
-  return { inserted, updated, errors };
+function errors(r: SFCollectionResult, totals: { errors: number }): void {
+  totals.errors++;
+}
+
+async function upsertListRecords(
+  _conn: unknown,
+  records: AEListRecord[],
+): Promise<{ inserted: number; updated: number; errors: number }> {
+  return sfUpsert('AE_List__c', 'AE_List_ID__c', records);
+}
+
+async function upsertMembershipRecords(
+  _conn: unknown,
+  records: AEMembershipRecord[],
+): Promise<{ inserted: number; updated: number; errors: number }> {
+  return sfUpsert('AE_List_Membership__c', 'Membership_Key__c', records);
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -237,6 +259,31 @@ async function handleAeListSync(rawArgs: unknown): Promise<string> {
       '  SF_CLIENT_SECRET — Connected App Consumer Secret\n\n' +
       'Setup: Salesforce Setup → App Manager → New Connected App\n' +
       'Scopes required: api, pardot_api, refresh_token'
+    );
+  }
+
+  // ── Full sync: delegate to n8n webhook to avoid MCP timeout ──────────────
+  if (mode === 'full' && !dry_run) {
+    const webhookUrl = process.env.N8N_AE_SYNC_WEBHOOK_URL;
+    if (!webhookUrl) {
+      return (
+        '❌ `full` mode requires `N8N_AE_SYNC_WEBHOOK_URL` env var.\n\n' +
+        'Set this to your n8n Workflow 12 webhook URL after importing it.\n' +
+        'In the meantime, use `lists_only` to sync list records, then\n' +
+        '`memberships_only` with a specific `list_id` for targeted syncs.'
+      );
+    }
+    const resp = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'all' }),
+    });
+    const result = await resp.json() as Record<string, unknown>;
+    return (
+      `# 🔄 AE List Sync — Full (via n8n)\n\n` +
+      `Job dispatched to n8n Workflow 12.\n\n` +
+      `**Result:** \`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\`\n\n` +
+      `*n8n will process all lists sequentially. Monitor in Google Chat for completion.*`
     );
   }
 
